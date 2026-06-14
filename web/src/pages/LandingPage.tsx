@@ -1,3 +1,4 @@
+import { Link } from "react-router-dom";
 import { Logo } from "../components/Logo";
 import { Button } from "../components/Button";
 import { BRAND_NAME } from "../lib/config";
@@ -33,12 +34,12 @@ export function LandingPage() {
     <div className="min-h-screen bg-bg">
       <header className="flex items-center justify-between px-8 py-5 max-w-7xl mx-auto">
         <Logo />
-        <button
-          onClick={() => {}}
+        <Link
+          to="/login"
           className="rounded-full bg-text text-white px-5 py-2 text-sm font-semibold"
         >
           Log in
-        </button>
+        </Link>
       </header>
 
       <section className="max-w-7xl mx-auto px-8 py-12 grid lg:grid-cols-2 gap-12 items-center">

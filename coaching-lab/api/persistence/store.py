@@ -122,6 +122,60 @@ class Store:
             ).fetchone()
             return dict(row) if row else None
 
+    def get_athlete_by_auth_user(self, auth_user_id: str) -> dict[str, Any] | None:
+        if self._use_supabase:
+            res = (
+                self._sb.table("athletes")
+                .select("*")
+                .eq("auth_user_id", auth_user_id)
+                .limit(1)
+                .execute()
+            )
+            return res.data[0] if res.data else None
+        with self._sqlite() as conn:
+            row = conn.execute(
+                "SELECT * FROM athletes WHERE auth_user_id = ?", (auth_user_id,)
+            ).fetchone()
+            return dict(row) if row else None
+
+    class GuestNotFoundError(Exception):
+        pass
+
+    class AuthLinkConflictError(Exception):
+        pass
+
+    def link_guest_to_auth(self, guest_id: str, auth_user_id: str) -> str:
+        """Link guest athlete row to auth user. Returns athlete id."""
+        guest_athlete = self.get_athlete_by_guest(guest_id)
+        if not guest_athlete:
+            raise Store.GuestNotFoundError()
+
+        existing = self.get_athlete_by_auth_user(auth_user_id)
+        if existing:
+            if existing["id"] == guest_athlete["id"]:
+                return str(guest_athlete["id"])
+            raise Store.AuthLinkConflictError()
+
+        current_auth = guest_athlete.get("auth_user_id")
+        if current_auth:
+            if str(current_auth) == auth_user_id:
+                return str(guest_athlete["id"])
+            raise Store.AuthLinkConflictError()
+
+        athlete_id = str(guest_athlete["id"])
+        if self._use_supabase:
+            self._sb.table("athletes").update(
+                {"auth_user_id": auth_user_id, "updated_at": _utcnow()}
+            ).eq("id", athlete_id).execute()
+            return athlete_id
+
+        with self._sqlite() as conn:
+            conn.execute(
+                "UPDATE athletes SET auth_user_id = ?, updated_at = ? WHERE id = ?",
+                (auth_user_id, _utcnow(), athlete_id),
+            )
+        return athlete_id
+
     def upsert_athlete_profile(
         self,
         athlete_id: str,

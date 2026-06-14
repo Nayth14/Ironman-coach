@@ -13,5 +13,7 @@ services:
         sync: false
       - key: SUPABASE_SERVICE_KEY
         sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
       - key: CORS_ORIGINS
         value: https://nayths-ironman-coach.netlify.app,http://localhost:5173

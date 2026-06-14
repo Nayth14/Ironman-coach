@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { Logo } from "../components/Logo";
+import { useAuth } from "../lib/auth";
 
 const NAV = [
   { to: "/dashboard", label: "Overview", icon: "📊" },
@@ -14,6 +15,9 @@ interface Props {
 }
 
 export function DashboardLayout({ raceName, weeksToRace }: Props) {
+  const { user, signOut } = useAuth();
+  const displayName = user?.email?.split("@")[0] || "Athlete";
+
   return (
     <div className="flex min-h-screen">
       <aside className="w-56 bg-white border-r border-border flex flex-col shrink-0">
@@ -39,13 +43,28 @@ export function DashboardLayout({ raceName, weeksToRace }: Props) {
             </NavLink>
           ))}
         </nav>
-        <div className="p-4 border-t border-border">
+        <div className="p-4 border-t border-border space-y-3">
           <div className="flex items-center gap-2 text-sm">
             <div className="w-8 h-8 rounded-full bg-gray-200 flex items-center justify-center">
               👤
             </div>
-            <span className="font-medium">Athlete</span>
+            <div className="min-w-0">
+              <div className="font-medium truncate">{displayName}</div>
+              {raceName && (
+                <div className="text-xs text-text-muted truncate">
+                  {raceName}
+                  {weeksToRace != null ? ` · ${weeksToRace}w to race` : ""}
+                </div>
+              )}
+            </div>
           </div>
+          <button
+            type="button"
+            onClick={() => signOut()}
+            className="w-full text-left text-xs text-text-muted hover:text-text px-1"
+          >
+            Sign out
+          </button>
         </div>
       </aside>
       <main className="flex-1 overflow-auto">

@@ -1,20 +1,38 @@
 import { getGuestId } from "./guest";
 
+type FetchMode = "guest" | "auth" | "both";
+
+let accessTokenGetter: (() => string | null) | null = null;
+
+export function setAccessTokenGetter(getter: () => string | null): void {
+  accessTokenGetter = getter;
+}
+
 async function apiFetch<T>(
   path: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  mode: FetchMode = "auth"
 ): Promise<T> {
-  const guestId = getGuestId();
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers as Record<string, string>),
   };
-  if (guestId) headers["X-Guest-Id"] = guestId;
+
+  if (mode === "guest" || mode === "both") {
+    const guestId = getGuestId();
+    if (guestId) headers["X-Guest-Id"] = guestId;
+  }
+
+  if (mode === "auth" || mode === "both") {
+    const token = accessTokenGetter?.();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
 
   const res = await fetch(path, { ...options, headers });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
-    throw new Error(err.detail || res.statusText);
+    const detail = err.detail || res.statusText;
+    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
   }
   return res.json();
 }
@@ -28,11 +46,20 @@ export interface SSEHandlers {
 export async function streamSSE(
   path: string,
   body: unknown,
-  handlers: SSEHandlers
+  handlers: SSEHandlers,
+  mode: FetchMode = "guest"
 ): Promise<void> {
-  const guestId = getGuestId();
   const headers: Record<string, string> = { "Content-Type": "application/json" };
-  if (guestId) headers["X-Guest-Id"] = guestId;
+
+  if (mode === "guest" || mode === "both") {
+    const guestId = getGuestId();
+    if (guestId) headers["X-Guest-Id"] = guestId;
+  }
+
+  if (mode === "auth" || mode === "both") {
+    const token = accessTokenGetter?.();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
 
   const res = await fetch(path, {
     method: "POST",
@@ -69,24 +96,41 @@ export async function streamSSE(
 }
 
 export const api = {
-  createGuest: () => apiFetch<{ guestId: string }>("/api/guests", { method: "POST", body: "{}" }),
+  createGuest: () =>
+    apiFetch<{ guestId: string }>("/api/guests", { method: "POST", body: "{}" }, "guest"),
+
+  linkGuest: () =>
+    apiFetch<{ athleteId: string; linked: boolean }>(
+      "/api/auth/link-guest",
+      { method: "POST", body: "{}" },
+      "both"
+    ),
 
   generatePlan: (messages: { role: string; content: string }[]) =>
-    apiFetch<import("./types").PlanGenerateResponse>("/api/plans/generate", {
-      method: "POST",
-      body: JSON.stringify({ messages }),
-    }),
+    apiFetch<import("./types").PlanGenerateResponse>(
+      "/api/plans/generate",
+      {
+        method: "POST",
+        body: JSON.stringify({ messages }),
+      },
+      "guest"
+    ),
 
   activatePlan: (planId: string) =>
-    apiFetch<{ status: string }>(`/api/plans/${planId}/activate`, { method: "POST" }),
+    apiFetch<{ status: string }>(
+      `/api/plans/${planId}/activate`,
+      { method: "POST" },
+      "auth"
+    ),
 
-  getCurrentPlan: () => apiFetch<{
-    plan: Record<string, unknown>;
-    planStartDate?: string | null;
-    workouts: import("./types").Workout[];
-    profile: import("./types").AthleteProfile | null;
-    readiness: import("./types").ReadinessResult | null;
-  }>("/api/plans/current"),
+  getCurrentPlan: () =>
+    apiFetch<{
+      plan: Record<string, unknown>;
+      planStartDate?: string | null;
+      workouts: import("./types").Workout[];
+      profile: import("./types").AthleteProfile | null;
+      readiness: import("./types").ReadinessResult | null;
+    }>("/api/plans/current"),
 
   listWorkouts: (sport?: string, status?: string) => {
     const params = new URLSearchParams();
@@ -133,9 +177,9 @@ export const api = {
   buildFixture: (name: string) =>
     apiFetch<import("./types").PlanGenerateResponse>(
       `/api/fixtures/${name}/build`,
-      { method: "POST", body: "{}" }
+      { method: "POST", body: "{}" },
+      "guest"
     ),
 
-  listFixtures: () =>
-    apiFetch<{ fixtures: string[] }>("/api/fixtures"),
+  listFixtures: () => apiFetch<{ fixtures: string[] }>("/api/fixtures"),
 };

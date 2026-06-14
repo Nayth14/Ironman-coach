@@ -43,7 +43,8 @@ export function CoachChatPanel({ open, onClose }: Props) {
               { role: "assistant", content: `Error: ${d.message}` },
             ]);
           },
-        }
+        },
+        "auth"
       );
     } catch (e) {
       setMessages([
