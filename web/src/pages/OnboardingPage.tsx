@@ -59,16 +59,14 @@ export function OnboardingPage() {
     setStreaming(true);
     setError(null);
 
-    let assistant = "";
     let ready = false;
     try {
       await streamSSE("/api/chat/onboarding", { messages: next }, {
         onToken: (d) => {
-          assistant = d.full;
           setMessages([...next, { role: "assistant", content: d.full }]);
         },
         onDone: async (d) => {
-          const final = [...next, { role: "assistant", content: d.content }];
+          const final: ChatMessage[] = [...next, { role: "assistant", content: d.content }];
           setMessages(final);
           ready = d.ready ?? false;
           if (ready) await generatePlan(final);
