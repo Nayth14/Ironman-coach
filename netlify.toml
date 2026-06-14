@@ -7,7 +7,7 @@
 
 [[redirects]]
   from = "/api/*"
-  to = "https://ironman-coach-api.onrender.com/api/:splat"
+  to = "https://nayths-ironman-coach-api.onrender.com/api/:splat"
   status = 200
   force = true
 

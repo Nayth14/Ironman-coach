@@ -7,6 +7,8 @@
 
 This document records the architectural decisions for implementing the Nayth's Ironman Coach web application. It is written to support a **web-first MVP** while ensuring native mobile (iOS SwiftUI companion) and device integrations (Garmin, TrainingPeaks, Apple WorkoutKit) can be layered in later without fundamental rework.
 
+**Focused auth ADR:** `docs/Auth/ADR0Auth-Flow.md`
+
 ---
 
 ## ADR Index

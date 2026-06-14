@@ -4,6 +4,8 @@ import { Logo } from "../components/Logo";
 import { ReadinessCard } from "../components/ReadinessCard";
 import { Button } from "../components/Button";
 import { api, streamSSE } from "../lib/api";
+import { useAuth } from "../lib/auth";
+import { setPendingPlanActivation, linkGuestIfNeeded } from "../lib/authLink";
 import { ensureGuestId, setPlanId } from "../lib/guest";
 import type { ChatMessage, PlanGenerateResponse } from "../lib/types";
 import { DAY_NAMES, formatDate } from "../lib/config";
@@ -11,6 +13,7 @@ import { SportIcon } from "../components/SportIcon";
 
 export function OnboardingPage() {
   const navigate = useNavigate();
+  const { session } = useAuth();
   const [params] = useSearchParams();
   const demo = params.get("demo");
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -59,16 +62,14 @@ export function OnboardingPage() {
     setStreaming(true);
     setError(null);
 
-    let assistant = "";
     let ready = false;
     try {
       await streamSSE("/api/chat/onboarding", { messages: next }, {
         onToken: (d) => {
-          assistant = d.full;
           setMessages([...next, { role: "assistant", content: d.full }]);
         },
         onDone: async (d) => {
-          const final = [...next, { role: "assistant", content: d.content }];
+          const final: ChatMessage[] = [...next, { role: "assistant", content: d.content }];
           setMessages(final);
           ready = d.ready ?? false;
           if (ready) await generatePlan(final);
@@ -98,7 +99,13 @@ export function OnboardingPage() {
 
   const startWeek1 = async () => {
     if (!result) return;
+    if (!session) {
+      setPendingPlanActivation(result.planId);
+      navigate("/signup?next=/dashboard");
+      return;
+    }
     try {
+      await linkGuestIfNeeded();
       await api.activatePlan(result.planId);
       navigate("/dashboard");
     } catch (e) {

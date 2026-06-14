@@ -9,7 +9,11 @@ __pycache__/
 
 # Build & data
 web/dist/
+web/tsconfig.tsbuildinfo
 coaching-lab/data/
 
 # OS
 .DS_Store
+
+# Local Netlify folder
+.netlify

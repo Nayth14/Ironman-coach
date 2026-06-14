@@ -6,6 +6,8 @@
 **Status:** Draft  
 **Product name:** Nayth's Ironman Coach
 
+**Focused auth PRD:** `docs/Auth/PRD-Auth-flow.md`
+
 ---
 
 ## 1. Executive Summary

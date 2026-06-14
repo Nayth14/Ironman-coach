@@ -22,7 +22,7 @@ export async function ensureGuestId(): Promise<string> {
   if (id) return id;
   const res = await fetch("/api/guests", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
   if (!res.ok) throw new Error("Failed to create guest");
-  const data = await res.json();
+  const data = (await res.json()) as { guestId: string };
   id = data.guestId;
   setGuestId(id);
   return id;

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any
 
@@ -22,10 +23,12 @@ from engine.models import (
 )
 from engine.prompts import COACHING_SYSTEM, ONBOARDING_SYSTEM, SUMMARY_SYSTEM
 
-from api.deps import require_guest, store
+from api.deps import require_auth, require_auth_athlete, require_guest, store
 from api.persistence.store import Store, get_store
 
 load_dotenv()
+
+logger = logging.getLogger("ironman_coach.auth")
 
 app = FastAPI(
     title="Ironman Coach API",
@@ -158,6 +161,38 @@ def create_guest(body: GuestCreate | None = None, s: Store = Depends(store)):
     return {"guestId": athlete["guest_id"], "athleteId": athlete["id"]}
 
 
+@app.post("/api/auth/link-guest")
+def link_guest(
+    auth_user_id: str = Depends(require_auth),
+    x_guest_id: str | None = Header(default=None, alias="X-Guest-Id"),
+    s: Store = Depends(store),
+):
+    if not x_guest_id:
+        raise HTTPException(status_code=401, detail="X-Guest-Id header required")
+    try:
+        athlete_id = s.link_guest_to_auth(x_guest_id, auth_user_id)
+    except Store.GuestNotFoundError:
+        raise HTTPException(status_code=404, detail="Guest not found") from None
+    except Store.AuthLinkConflictError:
+        logger.warning(
+            "auth_link_guest_conflict guest_id=%s auth_user_id=%s",
+            x_guest_id,
+            auth_user_id,
+        )
+        raise HTTPException(
+            status_code=409,
+            detail="Auth account already linked to a different profile",
+        ) from None
+
+    logger.info(
+        "auth_link_guest_success guest_id=%s auth_user_id=%s athlete_id=%s",
+        x_guest_id,
+        auth_user_id,
+        athlete_id,
+    )
+    return {"athleteId": athlete_id, "linked": True}
+
+
 @app.post("/api/chat/onboarding")
 def onboarding_chat(body: OnboardingChatRequest, s: Store = Depends(store)):
     messages = [m.model_dump() for m in body.messages]
@@ -221,17 +256,17 @@ def generate_plan(
 @app.post("/api/plans/{plan_id}/activate")
 def activate_plan(
     plan_id: str,
-    guest: tuple[str, dict] = Depends(require_guest),
+    auth: tuple[str, dict] = Depends(require_auth_athlete),
     s: Store = Depends(store),
 ):
-    _, athlete = guest
+    _, athlete = auth
     s.activate_plan(athlete["id"], plan_id)
     return {"status": "active", "planId": plan_id}
 
 
 @app.get("/api/plans/current")
-def current_plan(guest: tuple[str, dict] = Depends(require_guest), s: Store = Depends(store)):
-    _, athlete = guest
+def current_plan(auth: tuple[str, dict] = Depends(require_auth_athlete), s: Store = Depends(store)):
+    _, athlete = auth
     plan_row = s.get_current_plan(athlete["id"])
     if not plan_row:
         raise HTTPException(404, "No plan found")
@@ -251,20 +286,20 @@ def current_plan(guest: tuple[str, dict] = Depends(require_guest), s: Store = De
 def list_workouts(
     sport: str | None = Query(default=None),
     status: str | None = Query(default=None),
-    guest: tuple[str, dict] = Depends(require_guest),
+    auth: tuple[str, dict] = Depends(require_auth_athlete),
     s: Store = Depends(store),
 ):
-    _, athlete = guest
+    _, athlete = auth
     return {"workouts": s.list_workouts(athlete["id"], sport=sport, status=status)}
 
 
 @app.get("/api/workouts/{workout_id}")
 def get_workout(
     workout_id: str,
-    guest: tuple[str, dict] = Depends(require_guest),
+    auth: tuple[str, dict] = Depends(require_auth_athlete),
     s: Store = Depends(store),
 ):
-    _, athlete = guest
+    _, athlete = auth
     w = s.get_workout(workout_id, athlete["id"])
     if not w:
         raise HTTPException(404, "Workout not found")
@@ -275,10 +310,10 @@ def get_workout(
 def complete_workout(
     workout_id: str,
     body: CompleteWorkoutRequest,
-    guest: tuple[str, dict] = Depends(require_guest),
+    auth: tuple[str, dict] = Depends(require_auth_athlete),
     s: Store = Depends(store),
 ):
-    _, athlete = guest
+    _, athlete = auth
     w = s.get_workout(workout_id, athlete["id"])
     if not w:
         raise HTTPException(404, "Workout not found")
@@ -297,10 +332,10 @@ def complete_workout(
 
 @app.post("/api/adaptations/evaluate")
 def evaluate_adaptation(
-    guest: tuple[str, dict] = Depends(require_guest),
+    auth: tuple[str, dict] = Depends(require_auth_athlete),
     s: Store = Depends(store),
 ):
-    _, athlete = guest
+    _, athlete = auth
     profile = s.profile_from_row(athlete)
     if not profile:
         raise HTTPException(400, "Profile not complete")
@@ -322,10 +357,10 @@ def evaluate_adaptation(
 
 @app.get("/api/adaptations/pending")
 def pending_adaptation(
-    guest: tuple[str, dict] = Depends(require_guest),
+    auth: tuple[str, dict] = Depends(require_auth_athlete),
     s: Store = Depends(store),
 ):
-    _, athlete = guest
+    _, athlete = auth
     event = s.get_pending_adaptation(athlete["id"])
     return {"adaptation": event}
 
@@ -334,7 +369,7 @@ def pending_adaptation(
 def accept_adaptation(
     event_id: str,
     body: AdaptationAcceptRequest,
-    guest: tuple[str, dict] = Depends(require_guest),
+    auth: tuple[str, dict] = Depends(require_auth_athlete),
     s: Store = Depends(store),
 ):
     s.accept_adaptation(event_id, body.accepted)
@@ -344,10 +379,10 @@ def accept_adaptation(
 @app.post("/api/chat/coaching")
 def coaching_chat(
     body: CoachingChatRequest,
-    guest: tuple[str, dict] = Depends(require_guest),
+    auth: tuple[str, dict] = Depends(require_auth_athlete),
     s: Store = Depends(store),
 ):
-    _, athlete = guest
+    _, athlete = auth
     context = _build_coaching_context(s, athlete)
     system = f"{COACHING_SYSTEM}\n\n--- Athlete context ---\n{context}"
     messages = [m.model_dump() for m in body.messages]
@@ -405,8 +440,8 @@ def build_from_fixture(
 
 
 @app.get("/api/athletes/me")
-def get_me(guest: tuple[str, dict] = Depends(require_guest), s: Store = Depends(store)):
-    _, athlete = guest
+def get_me(auth: tuple[str, dict] = Depends(require_auth_athlete), s: Store = Depends(store)):
+    _, athlete = auth
     profile = s.profile_from_row(athlete)
     readiness_data = s.readiness_from_row(athlete)
     return {

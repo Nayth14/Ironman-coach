@@ -49,15 +49,33 @@ Landing → **See a sample week** loads a fixture persona and builds a plan inst
 ## Supabase setup
 
 1. Create a Supabase project
-2. Run `supabase/migrations/001_initial_schema.sql` in the SQL editor
+2. Run migrations in `supabase/migrations/` via the SQL editor (or `./scripts/deploy-supabase.sh`)
 3. Add to `coaching-lab/.env`:
 
 ```
 SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_SERVICE_KEY=your-service-role-key
+SUPABASE_JWT_SECRET=your-jwt-secret
 ```
 
-Without these vars the API uses SQLite at `coaching-lab/data/ironman_coach.db`.
+4. Add to `web/.env`:
+
+```
+VITE_SUPABASE_URL=https://your-project.supabase.co
+VITE_SUPABASE_ANON_KEY=your-anon-key
+```
+
+Without Supabase URL + service key the API uses SQLite at `coaching-lab/data/ironman_coach.db`.
+When `SUPABASE_JWT_SECRET` is unset, the API accepts dev Bearer tokens for local auth testing.
+
+### Auth providers (Supabase dashboard)
+
+1. **Authentication → URL configuration**: add redirect URLs  
+   - `http://localhost:5173/auth/callback`  
+   - `https://your-production-domain/auth/callback`
+2. **Authentication → Providers**: enable Google and Facebook OAuth (configure client IDs in Google Cloud / Meta).
+3. **Authentication → Email**: enable email/password; set password recovery redirect to `/reset-password`.
+4. Copy **JWT Secret** from Project Settings → API into `SUPABASE_JWT_SECRET`.
 
 ## Deployment
 

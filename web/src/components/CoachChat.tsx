@@ -26,14 +26,12 @@ export function CoachChatPanel({ open, onClose }: Props) {
     setInput("");
     setStreaming(true);
 
-    let assistant = "";
     try {
       await streamSSE(
         "/api/chat/coaching",
         { messages: next },
         {
           onToken: (d) => {
-            assistant = d.full;
             setMessages([...next, { role: "assistant", content: d.full }]);
           },
           onDone: (d) => {
@@ -45,7 +43,8 @@ export function CoachChatPanel({ open, onClose }: Props) {
               { role: "assistant", content: `Error: ${d.message}` },
             ]);
           },
-        }
+        },
+        "auth"
       );
     } catch (e) {
       setMessages([
