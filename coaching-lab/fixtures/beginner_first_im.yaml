@@ -1,0 +1,17 @@
+# Persona: first-timer, generous runway, no strength background, no injuries.
+# Use to check the engine builds a conservative, base-heavy plan with intro strength.
+name: Beginner - First Ironman
+profile:
+  goal_type: finish
+  race_name: Ironman Wales
+  race_date: "2027-02-15"   # long runway from a 2026 build date
+  weekly_hours: 9
+  limiter_discipline: swim
+  experience_level: beginner
+  available_days: [0, 1, 2, 3, 5, 6]
+  injury_flags: []
+  strength_background: none
+  strength_equipment: minimal
+  current_strength_routine: null
+  strength_restrictions: []
+  confidence: "Nervous but motivated"

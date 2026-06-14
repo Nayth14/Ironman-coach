@@ -1,0 +1,18 @@
+# Persona: returning from a break with a knee injury, short-ish runway, home equipment.
+# Use to check conservative routing, injury-safe strength (no heavy squats/lunges),
+# and an amber/red readiness verdict.
+name: Returning - Knee Injury
+profile:
+  goal_type: return
+  race_name: Ironman Hamburg
+  race_date: "2026-10-15"
+  weekly_hours: 7
+  limiter_discipline: run
+  experience_level: intermediate
+  available_days: [1, 2, 4, 6]
+  injury_flags: ["left knee"]
+  strength_background: beginner
+  strength_equipment: home
+  current_strength_routine: "Occasional bodyweight"
+  strength_restrictions: ["no deep knee flexion under load"]
+  confidence: "Cautious after time off"

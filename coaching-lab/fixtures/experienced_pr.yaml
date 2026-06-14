@@ -1,0 +1,17 @@
+# Persona: experienced athlete chasing a PR, gym access, high volume, no injuries.
+# Use to check the engine builds more build/peak emphasis and 2x/week strength.
+name: Experienced - PR Attempt
+profile:
+  goal_type: pr
+  race_name: Ironman Lanzarote
+  race_date: "2026-12-01"
+  weekly_hours: 14
+  limiter_discipline: run
+  experience_level: advanced
+  available_days: [0, 1, 2, 3, 4, 5, 6]
+  injury_flags: []
+  strength_background: experienced
+  strength_equipment: gym
+  current_strength_routine: "2x/week lifting, squats and deadlifts"
+  strength_restrictions: []
+  confidence: "Confident, focused on marathon split"
