@@ -15,8 +15,14 @@ from pydantic import BaseModel, Field
 
 from engine import adaptation, extract, fixtures, plan as plan_builder, readiness
 from engine import llm
+from engine.adaptation.telemetry import TelemetryEvent, emit
 from engine.models import (
+    AdaptationDecision,
+    AdaptationResult,
     AthleteProfile,
+    PhaseName,
+    PlanMutation,
+    PlanState,
     ReadinessResult,
     TrainingPlan,
     WorkoutCompletion,
@@ -342,17 +348,52 @@ def evaluate_adaptation(
     completions = s.completions_for_adaptation(athlete["id"])
     if len(completions) < 1:
         raise HTTPException(400, "Need at least one completion to evaluate")
-    result = adaptation.evaluate(profile, completions)
+
     plan_row = s.get_current_plan(athlete["id"])
     plan_id = plan_row["id"] if plan_row else None
+    plan_state = s.get_plan_state(plan_id) if plan_id else PlanState()
+    training_plan = None
+    phase = PhaseName.BASE
+    week_number = 1
+    is_deload_week = False
+    if plan_row:
+        training_plan = s.build_training_plan(athlete["id"], plan_row)
+        if training_plan.weeks:
+            week_number = training_plan.weeks[0].week_number
+            phase = training_plan.weeks[0].phase
+            is_deload_week = training_plan.weeks[0].is_deload
+
+    result = adaptation.evaluate(
+        profile,
+        completions,
+        plan_state=plan_state,
+        plan=training_plan,
+        phase=phase,
+        week_number=week_number,
+        is_deload_week=is_deload_week,
+    )
     event_id = s.save_adaptation(athlete["id"], plan_id, result)
-    return {
+    emit(
+        TelemetryEvent.TRIGGERED,
+        athlete_id=athlete["id"],
+        event_id=event_id,
+        decision=result.decision.value,
+        playbook_version=result.playbook_version,
+    )
+    payload = {
         "eventId": event_id,
         "decision": result.decision.value,
         "signals": result.signals,
         "changes": result.changes,
         "rationale": result.rationale,
+        "mutations": [m.model_dump() for m in result.mutations],
+        "planStateDelta": result.plan_state_delta,
+        "playbookVersion": result.playbook_version,
+        "insufficientData": result.insufficient_data,
     }
+    if result.diff:
+        payload["diff"] = result.diff.model_dump()
+    return payload
 
 
 @app.get("/api/adaptations/pending")
@@ -362,7 +403,26 @@ def pending_adaptation(
 ):
     _, athlete = auth
     event = s.get_pending_adaptation(athlete["id"])
+    if event:
+        event = _serialize_adaptation_event(event)
     return {"adaptation": event}
+
+
+def _serialize_adaptation_event(event: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "eventId": event.get("id"),
+        "id": event.get("id"),
+        "decision": event.get("decision"),
+        "signals": event.get("signals") or [],
+        "changes": event.get("changes") or [],
+        "rationale": event.get("rationale"),
+        "mutations": event.get("proposed_mutations") or [],
+        "planStateDelta": event.get("plan_state_delta") or {},
+        "playbookVersion": event.get("playbook_version"),
+        "diff": event.get("diff"),
+        "user_accepted": event.get("user_accepted"),
+        "applicationStatus": event.get("application_status"),
+    }
 
 
 @app.post("/api/adaptations/{event_id}/accept")
@@ -372,8 +432,83 @@ def accept_adaptation(
     auth: tuple[str, dict] = Depends(require_auth_athlete),
     s: Store = Depends(store),
 ):
+    _, athlete = auth
+    event = s.get_adaptation_event(event_id)
+    if not event:
+        raise HTTPException(404, "Adaptation event not found")
+
     s.accept_adaptation(event_id, body.accepted)
-    return {"eventId": event_id, "accepted": body.accepted}
+
+    if not body.accepted:
+        emit(
+            TelemetryEvent.DISMISSED,
+            athlete_id=athlete["id"],
+            event_id=event_id,
+            decision=event.get("decision"),
+            playbook_version=event.get("playbook_version"),
+        )
+        return {"eventId": event_id, "accepted": False, "applied": False}
+
+    plan_id = event.get("plan_id")
+    if not plan_id:
+        emit(TelemetryEvent.APPLY_FAILURE, athlete_id=athlete["id"], event_id=event_id)
+        return {"eventId": event_id, "accepted": True, "applied": False, "error": "No plan"}
+
+    plan_row = s.get_current_plan(athlete["id"])
+    if not plan_row:
+        raise HTTPException(404, "Plan not found")
+
+    profile = s.profile_from_row(athlete)
+    training_plan = s.build_training_plan(athlete["id"], plan_row)
+    plan_state = s.get_plan_state(plan_id)
+
+    mutations = [
+        PlanMutation.model_validate(m) for m in (event.get("proposed_mutations") or [])
+    ]
+    result = AdaptationResult(
+        decision=AdaptationDecision(event["decision"]),
+        signals=event.get("signals") or [],
+        changes=event.get("changes") or [],
+        rationale=event.get("rationale") or "",
+        mutations=mutations,
+        plan_state_delta=event.get("plan_state_delta") or {},
+        playbook_version=event.get("playbook_version"),
+        diff=None,
+    )
+
+    try:
+        s.apply_adaptation_event(
+            event_id, athlete["id"], training_plan, plan_id, result
+        )
+        emit(
+            TelemetryEvent.APPLY_SUCCESS,
+            athlete_id=athlete["id"],
+            event_id=event_id,
+            decision=result.decision.value,
+            playbook_version=result.playbook_version,
+        )
+        return {"eventId": event_id, "accepted": True, "applied": True}
+    except Exception as exc:
+        logger.exception("adaptation apply failed")
+        emit(
+            TelemetryEvent.APPLY_FAILURE,
+            athlete_id=athlete["id"],
+            event_id=event_id,
+            extra={"error": str(exc)},
+        )
+        if not s._use_supabase:
+            with s._sqlite() as conn:
+                conn.execute(
+                    """UPDATE adaptation_events SET application_status='failed',
+                    application_error=? WHERE id=?""",
+                    (str(exc), event_id),
+                )
+        return {
+            "eventId": event_id,
+            "accepted": True,
+            "applied": False,
+            "error": str(exc),
+        }
 
 
 @app.post("/api/chat/coaching")

@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS training_plans (
   plan_start_date TEXT,
   status TEXT NOT NULL DEFAULT 'preview',
   strength_plan TEXT NOT NULL DEFAULT '{}',
+  plan_state TEXT NOT NULL DEFAULT '{}',
   summary TEXT,
   created_at TEXT NOT NULL,
   activated_at TEXT
@@ -92,7 +93,16 @@ CREATE TABLE IF NOT EXISTS adaptation_events (
   changes TEXT DEFAULT '[]',
   rationale TEXT NOT NULL,
   user_accepted INTEGER,
-  triggered_at TEXT NOT NULL
+  triggered_at TEXT NOT NULL,
+  proposed_mutations TEXT DEFAULT '[]',
+  applied_mutations TEXT,
+  plan_state_delta TEXT DEFAULT '{}',
+  playbook_version TEXT,
+  pre_checksum TEXT,
+  post_checksum TEXT,
+  application_status TEXT DEFAULT 'pending',
+  application_error TEXT,
+  diff TEXT
 );
 
 CREATE TABLE IF NOT EXISTS chat_conversations (

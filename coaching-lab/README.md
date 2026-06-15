@@ -26,9 +26,20 @@ coaching-lab/
 │   ├── periodization.py   # Prep -> Base -> Build -> Peak -> Taper
 │   ├── scheduler.py       # Weekly calendar of workouts
 │   ├── plan.py            # Orchestrates a full TrainingPlan
-│   ├── adaptation.py      # progress / hold / deload engine
+│   ├── adaptation/        # Playbook-driven progress / hold / deload engine
+│   │   ├── loader.py      # Loads + caches Adaptation-Playbook.md each eval
+│   │   ├── parser.py      # Parses ```playbook fenced YAML blocks
+│   │   ├── signals.py     # 7/14/28-day signal aggregation
+│   │   ├── decide.py      # Decision ladder from PlaybookSpec
+│   │   ├── mutate.py      # Plan mutation operations
+│   │   ├── apply.py       # Apply mutations to materialized weeks
+│   │   ├── trajectory.py  # PlanState macro rules
+│   │   └── guardrails.py  # GR-* hard floor validation
 │   ├── fixtures.py        # Load saved personas
 │   └── prompts/           # System prompts (port to packages/llm)
+├── playbook/              # Authoritative adaptation ruleset (parsed by engine)
+│   ├── Adaptation-Playbook.md
+│   └── playbook-data.yaml
 └── fixtures/              # Saved athlete personas for regression
 ```
 

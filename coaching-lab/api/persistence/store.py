@@ -20,6 +20,10 @@ from engine.models import (
     AdaptationResult,
     AthleteProfile,
     Phase,
+    PhaseName,
+    PlanState,
+    PlannedWeek,
+    PurposeTag,
     ReadinessResult,
     Sport,
     StrengthPlan,
@@ -27,6 +31,7 @@ from engine.models import (
     Workout,
     WorkoutCompletion,
     WorkoutStatus,
+    WorkoutStep,
 )
 
 _DB_PATH = Path(__file__).resolve().parent.parent / "data" / "ironman_coach.db"
@@ -74,6 +79,30 @@ class Store:
             conn.execute(
                 "ALTER TABLE training_plans ADD COLUMN plan_start_date TEXT"
             )
+        if "plan_state" not in cols:
+            conn.execute(
+                "ALTER TABLE training_plans ADD COLUMN plan_state TEXT NOT NULL DEFAULT '{}'"
+            )
+
+        ae_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(adaptation_events)").fetchall()
+        }
+        for col, default in (
+            ("proposed_mutations", "'[]'"),
+            ("applied_mutations", "NULL"),
+            ("plan_state_delta", "'{}'"),
+            ("playbook_version", "NULL"),
+            ("pre_checksum", "NULL"),
+            ("post_checksum", "NULL"),
+            ("application_status", "'pending'"),
+            ("application_error", "NULL"),
+            ("diff", "NULL"),
+        ):
+            if col not in ae_cols:
+                conn.execute(
+                    f"ALTER TABLE adaptation_events ADD COLUMN {col} TEXT DEFAULT {default}"
+                )
 
     @contextmanager
     def _sqlite(self):
@@ -592,7 +621,7 @@ class Store:
             )
         with self._sqlite() as conn:
             rows = conn.execute(
-                """SELECT c.*, w.title, w.sport, w.week_number
+                """SELECT c.*, w.title, w.sport, w.week_number, w.is_key_session, w.phase
                 FROM workout_completions c
                 JOIN workouts w ON w.id = c.workout_id
                 WHERE c.athlete_id = ?
@@ -612,7 +641,14 @@ class Store:
         rows = self.list_completions(athlete_id, limit=20)
         out = []
         for r in rows:
-            sport_val = r.get("sport") or Sport.OTHER
+            sport_raw = r.get("sport") or Sport.OTHER
+            sport_val = Sport(sport_raw) if isinstance(sport_raw, str) else sport_raw
+            completed_at = None
+            if r.get("completed_at"):
+                try:
+                    completed_at = date.fromisoformat(str(r["completed_at"])[:10])
+                except ValueError:
+                    completed_at = None
             out.append(
                 WorkoutCompletion(
                     workout_id=r["workout_id"],
@@ -622,9 +658,125 @@ class Store:
                     readiness_score=r.get("readiness_score"),
                     fatigue_flags=r.get("fatigue_flags") or [],
                     notes=r.get("notes"),
+                    is_key_session=bool(r.get("is_key_session", 0)),
+                    is_optional=not bool(r.get("is_key_session", 0)),
+                    completed_at=completed_at,
                 )
             )
         return out
+
+    def get_plan_state(self, plan_id: str) -> PlanState:
+        if self._use_supabase:
+            res = (
+                self._sb.table("training_plans")
+                .select("plan_state")
+                .eq("id", plan_id)
+                .limit(1)
+                .execute()
+            )
+            if not res.data:
+                return PlanState()
+            raw = res.data[0].get("plan_state") or {}
+            return PlanState.model_validate(raw if isinstance(raw, dict) else json.loads(raw))
+        with self._sqlite() as conn:
+            row = conn.execute(
+                "SELECT plan_state FROM training_plans WHERE id = ?", (plan_id,)
+            ).fetchone()
+            if not row or not row["plan_state"]:
+                return PlanState()
+            raw = row["plan_state"]
+            return PlanState.model_validate(json.loads(raw) if isinstance(raw, str) else raw)
+
+    def save_plan_state(self, plan_id: str, state: PlanState) -> None:
+        payload = state.model_dump()
+        if self._use_supabase:
+            self._sb.table("training_plans").update({"plan_state": payload}).eq(
+                "id", plan_id
+            ).execute()
+            return
+        with self._sqlite() as conn:
+            conn.execute(
+                "UPDATE training_plans SET plan_state = ? WHERE id = ?",
+                (json.dumps(payload), plan_id),
+            )
+
+    def build_training_plan(self, athlete_id: str, plan_row: dict[str, Any]) -> TrainingPlan:
+        workouts = self.list_workouts(athlete_id)
+        weeks_map: dict[int, list[Workout]] = {}
+        for w in workouts:
+            if w.get("plan_id") != plan_row["id"]:
+                continue
+            wn = int(w["week_number"])
+            steps = w.get("steps") or []
+            if isinstance(steps, str):
+                steps = json.loads(steps)
+            exercises = w.get("exercises") or []
+            if isinstance(exercises, str):
+                exercises = json.loads(exercises)
+            workout = Workout(
+                id=w["id"],
+                sport=Sport(w["sport"]),
+                title=w["title"],
+                description=w.get("description"),
+                scheduled_date=date.fromisoformat(w["scheduled_date"])
+                if w.get("scheduled_date")
+                else None,
+                day_of_week=w.get("day_of_week"),
+                purpose_tag=PurposeTag(w["purpose_tag"]),
+                is_key_session=bool(w.get("is_key_session")),
+                steps=[WorkoutStep.model_validate(s) for s in steps],
+                exercises=exercises,
+                estimated_duration_seconds=w.get("estimated_duration_seconds"),
+                estimated_distance_meters=w.get("estimated_distance_meters"),
+                estimated_tss=w.get("estimated_tss"),
+                fueling_notes=w.get("fueling_notes"),
+                status=WorkoutStatus(w.get("status", "planned")),
+            )
+            weeks_map.setdefault(wn, []).append(workout)
+
+        phases = []
+        for p in plan_row.get("phases") or []:
+            phases.append(
+                Phase(
+                    name=PhaseName(p["name"]),
+                    start_week=int(p["start_week"]),
+                    end_week=int(p["end_week"]),
+                    objective=p["objective"],
+                )
+            )
+
+        strength_raw = plan_row.get("strength_plan") or {}
+        if isinstance(strength_raw, str):
+            strength_raw = json.loads(strength_raw)
+
+        weeks: list[PlannedWeek] = []
+        for wn in sorted(weeks_map):
+            wks = weeks_map[wn]
+            phase_val = next(
+                (w.get("phase") for w in workouts if int(w["week_number"]) == wn),
+                "base",
+            )
+            total_sec = sum(x.estimated_duration_seconds or 0 for x in wks)
+            weeks.append(
+                PlannedWeek(
+                    week_number=wn,
+                    phase=PhaseName(phase_val),
+                    is_deload=False,
+                    target_hours=total_sec / 3600.0,
+                    workouts=wks,
+                )
+            )
+
+        return TrainingPlan(
+            athlete_race_date=date.fromisoformat(plan_row["race_date"]),
+            total_weeks=int(plan_row["total_weeks"]),
+            plan_start_date=date.fromisoformat(plan_row["plan_start_date"])
+            if plan_row.get("plan_start_date")
+            else date.today(),
+            phases=phases,
+            strength_plan=StrengthPlan.model_validate(strength_raw),
+            weeks=weeks,
+        )
 
     def save_adaptation(
         self,
@@ -634,6 +786,8 @@ class Store:
         user_accepted: bool | None = None,
     ) -> str:
         eid = _new_id()
+        mutations_json = [m.model_dump() for m in result.mutations]
+        diff_json = result.diff.model_dump() if result.diff else None
         data = {
             "id": eid,
             "athlete_id": athlete_id,
@@ -643,6 +797,11 @@ class Store:
             "changes": result.changes,
             "rationale": result.rationale,
             "user_accepted": user_accepted,
+            "proposed_mutations": mutations_json,
+            "plan_state_delta": result.plan_state_delta,
+            "playbook_version": result.playbook_version,
+            "application_status": "pending",
+            "diff": diff_json,
         }
         if self._use_supabase:
             self._sb.table("adaptation_events").insert(data).execute()
@@ -651,8 +810,9 @@ class Store:
             conn.execute(
                 """INSERT INTO adaptation_events
                 (id, athlete_id, plan_id, decision, signals, changes, rationale,
-                 user_accepted, triggered_at)
-                VALUES (?,?,?,?,?,?,?,?,?)""",
+                 user_accepted, triggered_at, proposed_mutations, plan_state_delta,
+                 playbook_version, application_status, diff)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     eid,
                     athlete_id,
@@ -663,9 +823,112 @@ class Store:
                     result.rationale,
                     user_accepted,
                     _utcnow(),
+                    json.dumps(mutations_json),
+                    json.dumps(result.plan_state_delta),
+                    result.playbook_version,
+                    "pending",
+                    json.dumps(diff_json) if diff_json else None,
                 ),
             )
         return eid
+
+    def get_adaptation_event(self, event_id: str) -> dict[str, Any] | None:
+        if self._use_supabase:
+            res = (
+                self._sb.table("adaptation_events")
+                .select("*")
+                .eq("id", event_id)
+                .limit(1)
+                .execute()
+            )
+            return res.data[0] if res.data else None
+        with self._sqlite() as conn:
+            row = conn.execute(
+                "SELECT * FROM adaptation_events WHERE id = ?", (event_id,)
+            ).fetchone()
+            if not row:
+                return None
+            d = dict(row)
+            for k in (
+                "signals",
+                "changes",
+                "proposed_mutations",
+                "applied_mutations",
+                "plan_state_delta",
+                "diff",
+            ):
+                if k in d and isinstance(d[k], str) and d[k]:
+                    d[k] = json.loads(d[k])
+            return d
+
+    def apply_adaptation_event(
+        self,
+        event_id: str,
+        athlete_id: str,
+        plan: TrainingPlan,
+        plan_id: str,
+        result: AdaptationResult,
+    ) -> TrainingPlan:
+        from engine.adaptation.apply import apply_mutations_to_plan
+        from engine.adaptation.guardrails import assert_plan_still_valid
+        from engine.adaptation.trajectory import apply_plan_state_delta
+
+        state = self.get_plan_state(plan_id)
+        new_plan, _ = apply_mutations_to_plan(plan, result.mutations)
+        assert_plan_still_valid(new_plan)
+        new_state = apply_plan_state_delta(state, result.plan_state_delta)
+
+        if self._use_supabase:
+            for week in new_plan.weeks:
+                for w in week.workouts:
+                    self._sb.table("workouts").update(
+                        {
+                            "title": w.title,
+                            "sport": w.sport.value,
+                            "purpose_tag": w.purpose_tag.value,
+                            "is_key_session": w.is_key_session,
+                            "estimated_duration_seconds": w.estimated_duration_seconds,
+                            "fueling_notes": w.fueling_notes,
+                            "status": w.status.value,
+                        }
+                    ).eq("id", w.id).execute()
+            self.save_plan_state(plan_id, new_state)
+            self._sb.table("adaptation_events").update(
+                {
+                    "applied_mutations": [m.model_dump() for m in result.mutations],
+                    "application_status": "applied",
+                }
+            ).eq("id", event_id).execute()
+            return new_plan
+
+        with self._sqlite() as conn:
+            for week in new_plan.weeks:
+                for w in week.workouts:
+                    conn.execute(
+                        """UPDATE workouts SET title=?, sport=?, purpose_tag=?,
+                        is_key_session=?, estimated_duration_seconds=?, fueling_notes=?, status=?
+                        WHERE id=?""",
+                        (
+                            w.title,
+                            w.sport.value,
+                            w.purpose_tag.value,
+                            int(w.is_key_session),
+                            w.estimated_duration_seconds,
+                            w.fueling_notes,
+                            w.status.value,
+                            w.id,
+                        ),
+                    )
+            conn.execute(
+                "UPDATE training_plans SET plan_state = ? WHERE id = ?",
+                (json.dumps(new_state.model_dump()), plan_id),
+            )
+            conn.execute(
+                """UPDATE adaptation_events SET applied_mutations=?, application_status=?
+                WHERE id=?""",
+                (json.dumps([m.model_dump() for m in result.mutations]), "applied", event_id),
+            )
+        return new_plan
 
     def get_pending_adaptation(self, athlete_id: str) -> dict[str, Any] | None:
         if self._use_supabase:
@@ -689,22 +952,40 @@ class Store:
             if not row:
                 return None
             d = dict(row)
-            for k in ("signals", "changes"):
-                if isinstance(d[k], str):
+            for k in (
+                "signals",
+                "changes",
+                "proposed_mutations",
+                "applied_mutations",
+                "plan_state_delta",
+                "diff",
+            ):
+                if k in d and isinstance(d[k], str) and d[k]:
                     d[k] = json.loads(d[k])
             return d
 
-    def accept_adaptation(self, event_id: str, accepted: bool) -> None:
+    def accept_adaptation(self, event_id: str, accepted: bool) -> dict[str, Any] | None:
         if self._use_supabase:
             self._sb.table("adaptation_events").update(
                 {"user_accepted": accepted}
             ).eq("id", event_id).execute()
-            return
+            res = (
+                self._sb.table("adaptation_events")
+                .select("*")
+                .eq("id", event_id)
+                .limit(1)
+                .execute()
+            )
+            return res.data[0] if res.data else None
         with self._sqlite() as conn:
             conn.execute(
                 "UPDATE adaptation_events SET user_accepted = ? WHERE id = ?",
                 (int(accepted), event_id),
             )
+            row = conn.execute(
+                "SELECT * FROM adaptation_events WHERE id = ?", (event_id,)
+            ).fetchone()
+            return dict(row) if row else None
 
     # ------------------------------------------------------------------
     # Chat

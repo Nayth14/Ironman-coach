@@ -104,6 +104,21 @@ export interface PlanGenerateResponse {
   summary: string;
 }
 
+export interface WorkoutDiff {
+  workout_id: string;
+  title: string;
+  before_duration_seconds?: number | null;
+  after_duration_seconds?: number | null;
+  change_summary: string;
+}
+
+export interface AdaptationDiff {
+  before_hours: number;
+  after_hours: number;
+  changed_workouts: WorkoutDiff[];
+  substitutions: string[];
+}
+
 export interface AdaptationEvent {
   eventId?: string;
   id?: string;
@@ -111,6 +126,12 @@ export interface AdaptationEvent {
   signals: string[];
   changes: string[];
   rationale: string;
+  mutations?: Record<string, unknown>[];
+  planStateDelta?: Record<string, unknown>;
+  playbookVersion?: string;
+  diff?: AdaptationDiff;
+  insufficientData?: boolean;
+  applicationStatus?: string;
   user_accepted?: boolean | null;
 }
 
