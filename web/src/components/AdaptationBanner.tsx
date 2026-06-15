@@ -29,6 +29,34 @@ export function AdaptationBanner({ adaptation, onAccept, onDismiss }: Props) {
           ))}
         </ul>
       )}
+      {adaptation.diff && (
+        <div className="text-sm mb-4 rounded-xl bg-white/60 p-3 border border-black/5">
+          <p className="font-medium mb-1">Preview changes</p>
+          <p>
+            Weekly hours: {adaptation.diff.before_hours.toFixed(1)}h →{" "}
+            {adaptation.diff.after_hours.toFixed(1)}h
+          </p>
+          {adaptation.diff.changed_workouts.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {adaptation.diff.changed_workouts.map((w) => (
+                <li key={w.workout_id}>
+                  • {w.title}: {w.change_summary}
+                </li>
+              ))}
+            </ul>
+          )}
+          {adaptation.diff.substitutions.length > 0 && (
+            <ul className="mt-2 space-y-1">
+              {adaptation.diff.substitutions.map((s, i) => (
+                <li key={i}>↔ {s}</li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+      {adaptation.playbookVersion && (
+        <p className="text-xs opacity-60 mb-3">Ruleset v{adaptation.playbookVersion}</p>
+      )}
       <div className="flex gap-2">
         <button
           onClick={onAccept}

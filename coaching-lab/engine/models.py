@@ -111,6 +111,37 @@ class AdaptationDecision(str, Enum):
     GUT_TRAINING = "gut_training"
 
 
+class ProgressionRate(str, Enum):
+    FROZEN = "frozen"
+    SLOW = "slow"
+    NORMAL = "normal"
+
+
+class MutationOp(str, Enum):
+    SCALE_WEEK_VOLUME = "scale_week_volume"
+    SCALE_NON_KEY_DURATION = "scale_non_key_duration"
+    REMOVE_OPTIONAL_SESSION = "remove_optional_session"
+    REPLACE_WORKOUT = "replace_workout"
+    STRIP_INTENSITY_TAGS = "strip_intensity_tags"
+    FORCE_DELOAD_WEEK = "force_deload_week"
+    INSERT_RECOVERY_BLOCK = "insert_recovery_block"
+    MODIFY_FUELING_NOTES = "modify_fueling_notes"
+    FREEZE_PROGRESSION_RATE = "freeze_progression_rate"
+    PULL_DELOAD_FORWARD = "pull_deload_forward"
+    SET_RUN_VOLUME_CAP = "set_run_volume_cap"
+    SET_GUT_TRAINING_MODE = "set_gut_training_mode"
+    ADD_EASY_AEROBIC = "add_easy_aerobic"
+    ADVANCE_PROGRESSION_RATE = "advance_progression_rate"
+    HOLD_GLOBAL_VOLUME = "hold_global_volume"
+
+
+class ApplicationStatus(str, Enum):
+    PENDING = "pending"
+    APPLIED = "applied"
+    REJECTED = "rejected"
+    FAILED = "failed"
+
+
 # ---------------------------------------------------------------------------
 # Athlete profile (extracted from onboarding chat)
 # ---------------------------------------------------------------------------
@@ -254,6 +285,55 @@ class WorkoutCompletion(BaseModel):
     readiness_score: Optional[int] = Field(default=None, ge=1, le=10)
     fatigue_flags: list[str] = Field(default_factory=list)
     notes: Optional[str] = None
+    is_key_session: bool = False
+    is_optional: bool = False
+    completed_at: Optional[date] = None
+
+
+class PlanState(BaseModel):
+    """Mutable trajectory state for an active training plan."""
+
+    volume_multiplier: float = 1.0
+    progression_rate: ProgressionRate = ProgressionRate.NORMAL
+    forced_deload_weeks: list[int] = Field(default_factory=list)
+    run_volume_cap: float = 1.0
+    gut_training_mode: bool = False
+    gut_carb_floor: Optional[int] = None
+    consecutive_holds: int = 0
+    consecutive_deloads: int = 0
+    weeks_since_recovery: int = 0
+    progression_frozen_weeks: int = 0
+    decision_history: list[str] = Field(default_factory=list)
+    illness_reentry: bool = False
+
+
+class PlanMutation(BaseModel):
+    """Machine-readable mutation operation."""
+
+    op: MutationOp
+    factor: Optional[float] = None
+    weeks: Optional[int] = None
+    days: Optional[int] = None
+    workout_id: Optional[str] = None
+    target_sport: Optional[Sport] = None
+    value: Optional[float] = None
+    bool_value: Optional[bool] = None
+    notes: Optional[str] = None
+
+
+class WorkoutDiff(BaseModel):
+    workout_id: str
+    title: str
+    before_duration_seconds: Optional[int] = None
+    after_duration_seconds: Optional[int] = None
+    change_summary: str
+
+
+class AdaptationDiff(BaseModel):
+    before_hours: float
+    after_hours: float
+    changed_workouts: list[WorkoutDiff] = Field(default_factory=list)
+    substitutions: list[str] = Field(default_factory=list)
 
 
 class AdaptationResult(BaseModel):
@@ -261,6 +341,11 @@ class AdaptationResult(BaseModel):
     signals: list[str]
     changes: list[str]
     rationale: str
+    mutations: list[PlanMutation] = Field(default_factory=list)
+    plan_state_delta: dict[str, object] = Field(default_factory=dict)
+    playbook_version: Optional[str] = None
+    diff: Optional[AdaptationDiff] = None
+    insufficient_data: bool = False
 
 
 # Pydantic v2 needs this for the self-referencing WorkoutStep.

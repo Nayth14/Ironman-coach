@@ -1,0 +1,373 @@
+# Machine-readable Adaptation Playbook ruleset.
+# Embedded in Adaptation-Playbook.md as playbook fenced blocks.
+# The engine parses this file (via the Markdown wrapper) on every evaluation.
+
+version: "1.0"
+
+guardrails:
+  max_weekly_increase: 0.10
+  max_deload_reduction: 0.50
+  default_deload_factor: 0.35
+  min_deload_factor: 0.30
+  easy_intensity_min_fraction: 0.80
+  easy_mandatory_weekly_hours: 15.0
+  easy_recommended_weekly_hours: 7.0
+
+windows:
+  decision_days: 7
+  trend_days: 14
+  macro_days: 28
+
+thresholds:
+  high_rpe: 8
+  low_readiness: 4
+  high_rpe_min_sessions: 2
+  low_readiness_min_sessions: 2
+  deload_flag_count: 3
+  hold_flag_count_min: 1
+  min_completed_sessions: 3
+  min_key_completed_sessions: 1
+  partial_week_min_sessions: 5
+  consecutive_holds_escalate: 2
+  consecutive_deloads_freeze_weeks: 2
+  per050_recovery_days_min: 3
+  per050_recovery_days_max: 5
+  illness_days_off_threshold: 3
+
+flag_weights:
+  missed_key_session: 2.0
+  missed_optional_session: 0.5
+  missed_default_session: 1.0
+
+orthopedic_keywords:
+  - knee
+  - shin
+  - calf
+  - achilles
+  - foot
+  - hip
+
+gi_keywords:
+  - gi
+  - stomach
+  - gut
+  - nausea
+  - cramp
+
+chronic_orthopedic_min_sessions: 2
+chronic_orthopedic_window_days: 14
+
+experience_progress_caps:
+  beginner: 0.05
+  intermediate: 0.08
+  advanced: 0.10
+
+phase_progress_factors:
+  prep: 1.0
+  base: 1.0
+  build: 0.3
+  peak: 0.1
+  taper: 0.0
+
+experience_hold_trim:
+  beginner: 0.20
+  intermediate: 0.15
+  advanced: 0.10
+
+hold_trim_single_flag: 0.10
+hold_trim_multi_flag: 0.20
+
+run_volume_cap:
+  beginner: 0.6
+  intermediate: 0.7
+  advanced: 0.8
+  niggle_cap: null
+  chronic_weeks_persist: 2
+  lift_increment_per_week: 0.1
+
+gut_training:
+  carb_floor_default: 60
+  carb_ramp_per_week: 5
+  systemic_session_threshold: 2
+
+priority_ranks:
+  - rank: 1
+    name: key_long_ride
+    hold_trim_max: 0.10
+    deload_trim_max: 0.35
+  - rank: 2
+    name: key_long_run
+    hold_trim_max: 0.15
+    deload_trim_max: 0.35
+  - rank: 3
+    name: race_sim_brick
+    hold_trim_max: 0.15
+    deload_trim_max: 0.40
+  - rank: 4
+    name: limiter_quality
+    hold_trim_max: 0.20
+    deload_strip_intensity: true
+  - rank: 5
+    name: threshold_vo2
+    hold_trim_max: 0.20
+    deload_strip_intensity: true
+  - rank: 6
+    name: technique_swim
+    hold_trim_max: 0.20
+    deload_trim_max: 0.30
+  - rank: 7
+    name: strength
+    hold_drop_second_session: true
+    deload_strip_heavy: true
+  - rank: 8
+    name: easy_aerobic_filler
+    hold_trim_first: true
+    deload_trim_max: 0.50
+  - rank: 9
+    name: optional_second_session
+    hold_remove_first: true
+    deload_remove: true
+
+decisions:
+  progress:
+    entry:
+      all_completed: true
+      all_rpe_below_high: true
+      zero_warning_flags: true
+      min_completed_sessions: 3
+      min_key_completed: 1
+      require_14_day_clean: true
+      injury_flags_disable: true
+    mutations:
+      - scale_week_volume
+      - add_easy_aerobic
+      - advance_progression_rate
+    forbidden:
+      - volume_and_density_same_week
+      - exceed_max_weekly_increase
+      - add_fourth_long_run_in_block
+      - break_easy_80_20
+      - progress_volume_in_taper
+
+  hold:
+    entry:
+      flag_count_min: 1
+      flag_count_max: 2
+    mutations:
+      - scale_non_key_duration
+      - remove_optional_session
+      - freeze_progression_rate
+    forbidden:
+      - cut_key_sessions
+      - increase_volume
+
+  deload:
+    entry:
+      flag_count_min: 3
+      consecutive_holds_escalate: 2
+    mutations:
+      - scale_week_volume
+      - strip_intensity_tags
+      - insert_recovery_block
+      - pull_deload_forward
+    forbidden:
+      - drop_session_frequency
+      - remove_all_easy_movement
+      - double_cut_scheduled_deload
+
+  bike_substitute:
+    entry:
+      sport: run
+      orthopedic_keywords_match: true
+    mutations:
+      - replace_workout
+      - set_run_volume_cap
+    forbidden:
+      - add_intensity_to_substitute_bike
+      - remove_all_running
+
+  gut_training:
+    entry:
+      gi_keywords_match: true
+    mutations:
+      - set_gut_training_mode
+      - modify_fueling_notes
+      - hold_global_volume
+    forbidden:
+      - generic_deload_volume_cut
+      - raise_carb_while_symptomatic
+
+macro_rules:
+  hold_progression_drop: 1
+  clean_week_progression_recover: 1
+  consecutive_holds_pull_deload: 1
+  base_extension_hold_threshold: 3
+  base_extension_deload_threshold: 2
+  amber_weeks_cap_peak: 3
+  phase_shift_max_weeks: 1
+
+narrator_templates:
+  progress: "You strung together a clean, consistent block — every key session done and nothing flagged. We're nudging volume up about {pct}% this week, mostly on easy aerobic time. Keep the easy days truly easy and protect your {key_session}."
+  hold: "A couple of signals ({signals}) tell me to keep load steady rather than push. I've trimmed {trimmed} and kept your {key_sessions} intact. This week's job: bank sleep and let the body absorb the work — we progress next week once you're green."
+  deload: "Fatigue has stacked up ({signals}), so we're taking a planned step back — about {pct}% less volume for {days} days, intensity off, frequency the same. This is a feature, not a setback; you'll come out fresher. Sacred this week: sleep and easy movement only."
+  bike_substitute: "Your {area} flared on the run, so we're protecting it by shifting that run's load onto an easy bike — same aerobic benefit, far less impact. We'll keep run frequency where it's pain-free and rebuild once it's quiet for two weeks."
+  gut_training: "Your stomach pushed back on race fueling, so we're training the gut deliberately: I've dialled intake back to {carb} g/h and we'll rehearse on the long ride before ramping. Training load stays put — let's fix tolerance first."
+
+golden_scenarios:
+  - id: G1
+    name: All green week progress
+    phase: base
+    week_number: 5
+    experience: intermediate
+    completions:
+      - {completed: true, rpe: 5, readiness_score: 8, is_key: true}
+      - {completed: true, rpe: 6, readiness_score: 7}
+      - {completed: true, rpe: 5, readiness_score: 8}
+    prior_week_clean: true
+    expected_decision: progress
+    expected_mutations: [scale_week_volume]
+    must_not: [exceed_max_weekly_increase, volume_and_density_same_week]
+
+  - id: G2
+    name: Single fatigue flag hold
+    phase: base
+    completions:
+      - {completed: true, rpe: 5, fatigue_flags: ["poor sleep"]}
+      - {completed: true, rpe: 5}
+      - {completed: true, rpe: 6, is_key: true}
+    expected_decision: hold
+    expected_mutations: [scale_non_key_duration, freeze_progression_rate]
+    must_not: [deload, cut_key_session]
+
+  - id: G3
+    name: Three stacked flags deload
+    phase: build
+    week_number: 3
+    completions:
+      - {completed: true, rpe: 9}
+      - {completed: true, rpe: 8}
+      - {completed: true, rpe: 9}
+      - {completed: true, rpe: 7, readiness_score: 3}
+      - {completed: true, rpe: 6, readiness_score: 4}
+      - {completed: true, fatigue_flags: ["heavy legs"]}
+    expected_decision: deload
+    expected_mutations: [scale_week_volume, strip_intensity_tags]
+    must_not: [drop_session_count]
+
+  - id: G4
+    name: Easy run RPE8 poor sleep hold not deload
+    phase: base
+    completions:
+      - {completed: true, sport: run, rpe: 8}
+      - {completed: true, rpe: 5, fatigue_flags: ["poor sleep"]}
+      - {completed: true, rpe: 6, is_key: true}
+    expected_decision: hold
+    expected_mutations: [scale_non_key_duration, remove_optional_session, freeze_progression_rate]
+    must_not: [deload, bike_substitute]
+
+  - id: G5
+    name: Left knee bike substitute
+    phase: base
+    completions:
+      - {completed: true, sport: run, fatigue_flags: ["left knee"]}
+      - {completed: true, rpe: 5, is_key: true}
+      - {completed: true, rpe: 6}
+    expected_decision: bike_substitute
+    expected_mutations: [replace_workout, set_run_volume_cap]
+    must_not: [add_intensity_to_substitute_bike, remove_all_running]
+
+  - id: G6
+    name: Nausea gut training
+    phase: build
+    completions:
+      - {completed: true, sport: bike, fatigue_flags: ["nausea"], is_key: true}
+      - {completed: true, rpe: 5}
+    expected_decision: gut_training
+    expected_mutations: [set_gut_training_mode, modify_fueling_notes]
+    must_not: [deload_volume, raise_carb_target]
+
+  - id: G7
+    name: Two consecutive holds escalate deload
+    phase: base
+    plan_state:
+      consecutive_holds: 1
+    completions:
+      - {completed: true, rpe: 5, fatigue_flags: ["poor sleep"]}
+      - {completed: true, rpe: 6}
+      - {completed: true, rpe: 5, is_key: true}
+    expected_decision: deload
+    expected_mutations: [pull_deload_forward, freeze_progression_rate]
+    must_not: [progress]
+
+  - id: G8
+    name: Missed long run hold preserve long ride
+    phase: build
+    completions:
+      - {completed: false, sport: run, is_key: true}
+      - {completed: true, sport: bike, rpe: 5, is_key: true}
+      - {completed: true, rpe: 6}
+    expected_decision: hold
+    must_not: [progress, cut_long_ride]
+
+  - id: G9
+    name: Deload week coinciding with signals
+    phase: build
+    is_deload_week: true
+    completions:
+      - {completed: true, rpe: 9}
+      - {completed: true, rpe: 8}
+      - {completed: true, rpe: 9}
+      - {completed: true, fatigue_flags: ["heavy legs"]}
+    expected_decision: deload
+    must_not: [double_cut_below_50_percent]
+
+  - id: G10
+    name: Taper amber hold only
+    phase: taper
+    completions:
+      - {completed: true, rpe: 5, fatigue_flags: ["poor sleep"]}
+      - {completed: true, rpe: 6, fatigue_flags: ["heavy legs"]}
+      - {completed: true, rpe: 5, is_key: true}
+    expected_decision: hold
+    must_not: [progress, increase_volume]
+
+  - id: G11
+    name: Returning from illness
+    phase: base
+    illness_days_off: 4
+    completions:
+      - {completed: true, rpe: 4}
+      - {completed: true, rpe: 5}
+    expected_decision: deload
+    must_not: [progress, full_duration_key_long]
+
+  - id: G12
+    name: Insufficient data hold
+    phase: base
+    completions:
+      - {completed: true, rpe: 5}
+      - {completed: true, rpe: 6}
+    expected_decision: hold
+    insufficient_data: true
+    must_not: [progress]
+
+  - id: G13
+    name: Run niggle single session scoped
+    phase: base
+    completions:
+      - {completed: true, sport: run, fatigue_flags: ["shin"]}
+      - {completed: true, rpe: 5, is_key: true}
+      - {completed: true, rpe: 6}
+    expected_decision: bike_substitute
+    expected_mutations: [replace_workout]
+    must_not: [set_run_volume_cap]
+
+  - id: G14
+    name: Gut issues systemic
+    phase: build
+    completions:
+      - {completed: true, sport: bike, fatigue_flags: ["stomach"]}
+      - {completed: true, sport: run, fatigue_flags: ["stomach"]}
+      - {completed: true, sport: swim, fatigue_flags: ["stomach"]}
+    expected_decision: gut_training
+    must_not: [deload, progress]

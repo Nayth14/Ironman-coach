@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import date
 
 from engine import calendar, enrich, periodization, scheduler, strength
-from engine.models import AthleteProfile, Phase, TrainingPlan
+from engine.models import AthleteProfile, Phase, PlanState, TrainingPlan
 from engine.readiness import weeks_to_race
 from engine.rules.validate import assert_plan_valid
 
@@ -19,6 +19,7 @@ def generate_plan(
     profile: AthleteProfile,
     today: date | None = None,
     max_weeks_to_build: int = 4,
+    plan_state: "PlanState | None" = None,
 ) -> TrainingPlan:
     """Generate the macrocycle and materialize the first N weeks of workouts.
 
@@ -30,6 +31,7 @@ def generate_plan(
 
     start = calendar.plan_start_date(ref_today)
     phases = periodization.build_phases(profile, total_weeks)
+    state = plan_state or PlanState()
 
     weeks = []
     build_count = min(max_weeks_to_build, total_weeks)
@@ -37,6 +39,8 @@ def generate_plan(
         phase_name = periodization.phase_for_week(phases, week_number)
         phase = next(p for p in phases if p.name == phase_name)
         is_deload = periodization.is_deload_week(week_number, phase_name)
+        if week_number in state.forced_deload_weeks:
+            is_deload = True
         ratio = _week_in_phase_ratio(week_number, phase)
 
         strength_plan = strength.prescribe_for_week(profile, phase_name, is_deload)
@@ -52,6 +56,14 @@ def generate_plan(
             week_in_phase_ratio=ratio,
             total_weeks=total_weeks,
         )
+        if state.volume_multiplier != 1.0:
+            week.target_hours *= state.volume_multiplier
+        if state.run_volume_cap < 1.0:
+            for w in week.workouts:
+                if w.sport.value == "run" and w.estimated_duration_seconds:
+                    w.estimated_duration_seconds = int(
+                        w.estimated_duration_seconds * state.run_volume_cap
+                    )
         calendar.assign_dates(week, start)
         week = enrich.enrich_week_steps(week, profile, phase_name)
         week.strength_plan = strength_plan
