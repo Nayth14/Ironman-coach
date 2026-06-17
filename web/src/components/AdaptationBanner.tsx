@@ -22,6 +22,17 @@ export function AdaptationBanner({ adaptation, onAccept, onDismiss }: Props) {
         Your coach adjusted this week — {adaptation.decision.replace(/_/g, " ")}
       </h3>
       <p className="text-sm mb-3">{adaptation.rationale}</p>
+      {adaptation.reviewedWeekNumber != null && adaptation.targetWeekNumber != null && (
+        <p className="text-sm mb-3 opacity-80">
+          Based on week {adaptation.reviewedWeekNumber} → updates week{" "}
+          {adaptation.targetWeekNumber}
+        </p>
+      )}
+      {adaptation.weeklyContextSummary && (
+        <p className="text-sm mb-3 opacity-90">
+          We understood: {adaptation.weeklyContextSummary}
+        </p>
+      )}
       {adaptation.changes.length > 0 && (
         <ul className="text-sm mb-4 space-y-1">
           {adaptation.changes.map((c, i) => (
@@ -55,7 +66,10 @@ export function AdaptationBanner({ adaptation, onAccept, onDismiss }: Props) {
         </div>
       )}
       {adaptation.playbookVersion && (
-        <p className="text-xs opacity-60 mb-3">Ruleset v{adaptation.playbookVersion}</p>
+        <p className="text-xs opacity-60 mb-3">
+          Ruleset v{adaptation.playbookVersion}
+          {adaptation.playbookRuleCited ? ` · ${adaptation.playbookRuleCited}` : ""}
+        </p>
       )}
       <div className="flex gap-2">
         <button

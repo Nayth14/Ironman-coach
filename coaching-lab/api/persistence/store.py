@@ -28,6 +28,7 @@ from engine.models import (
     Sport,
     StrengthPlan,
     TrainingPlan,
+    WeeklyContext,
     Workout,
     WorkoutCompletion,
     WorkoutStatus,
@@ -98,11 +99,38 @@ class Store:
             ("application_status", "'pending'"),
             ("application_error", "NULL"),
             ("diff", "NULL"),
+            ("reviewed_week_number", "NULL"),
+            ("target_week_number", "NULL"),
+            ("weekly_checkin_id", "NULL"),
+            ("canonical_decision", "NULL"),
+            ("llm_proposed_decision", "NULL"),
+            ("conformance_status", "NULL"),
+            ("playbook_rule_cited", "NULL"),
+            ("weekly_context_summary", "NULL"),
         ):
             if col not in ae_cols:
                 conn.execute(
                     f"ALTER TABLE adaptation_events ADD COLUMN {col} TEXT DEFAULT {default}"
                 )
+
+        wc_exists = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='weekly_checkins'"
+        ).fetchone()
+        if not wc_exists:
+            conn.executescript(
+                """
+                CREATE TABLE weekly_checkins (
+                  id TEXT PRIMARY KEY,
+                  athlete_id TEXT NOT NULL,
+                  plan_id TEXT,
+                  week_number INTEGER,
+                  conversation_id TEXT,
+                  extracted_context TEXT NOT NULL DEFAULT '{}',
+                  created_at TEXT NOT NULL
+                );
+                CREATE INDEX idx_weekly_checkins_athlete ON weekly_checkins(athlete_id);
+                """
+            )
 
     @contextmanager
     def _sqlite(self):
@@ -660,6 +688,7 @@ class Store:
                     notes=r.get("notes"),
                     is_key_session=bool(r.get("is_key_session", 0)),
                     is_optional=not bool(r.get("is_key_session", 0)),
+                    week_number=int(r["week_number"]) if r.get("week_number") is not None else None,
                     completed_at=completed_at,
                 )
             )
@@ -784,6 +813,7 @@ class Store:
         plan_id: str | None,
         result: AdaptationResult,
         user_accepted: bool | None = None,
+        weekly_checkin_id: str | None = None,
     ) -> str:
         eid = _new_id()
         mutations_json = [m.model_dump() for m in result.mutations]
@@ -802,6 +832,20 @@ class Store:
             "playbook_version": result.playbook_version,
             "application_status": "pending",
             "diff": diff_json,
+            "reviewed_week_number": result.reviewed_week_number,
+            "target_week_number": result.target_week_number,
+            "weekly_checkin_id": weekly_checkin_id,
+            "canonical_decision": (
+                result.canonical_decision.value if result.canonical_decision else None
+            ),
+            "llm_proposed_decision": (
+                result.llm_proposed_decision.value if result.llm_proposed_decision else None
+            ),
+            "conformance_status": (
+                result.conformance_status.value if result.conformance_status else None
+            ),
+            "playbook_rule_cited": result.playbook_rule_cited,
+            "weekly_context_summary": result.weekly_context_summary,
         }
         if self._use_supabase:
             self._sb.table("adaptation_events").insert(data).execute()
@@ -811,8 +855,11 @@ class Store:
                 """INSERT INTO adaptation_events
                 (id, athlete_id, plan_id, decision, signals, changes, rationale,
                  user_accepted, triggered_at, proposed_mutations, plan_state_delta,
-                 playbook_version, application_status, diff)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 playbook_version, application_status, diff, reviewed_week_number,
+                 target_week_number, weekly_checkin_id, canonical_decision,
+                 llm_proposed_decision, conformance_status, playbook_rule_cited,
+                 weekly_context_summary)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (
                     eid,
                     athlete_id,
@@ -828,6 +875,14 @@ class Store:
                     result.playbook_version,
                     "pending",
                     json.dumps(diff_json) if diff_json else None,
+                    result.reviewed_week_number,
+                    result.target_week_number,
+                    weekly_checkin_id,
+                    result.canonical_decision.value if result.canonical_decision else None,
+                    result.llm_proposed_decision.value if result.llm_proposed_decision else None,
+                    result.conformance_status.value if result.conformance_status else None,
+                    result.playbook_rule_cited,
+                    result.weekly_context_summary,
                 ),
             )
         return eid
@@ -874,7 +929,13 @@ class Store:
         from engine.adaptation.trajectory import apply_plan_state_delta
 
         state = self.get_plan_state(plan_id)
-        new_plan, _ = apply_mutations_to_plan(plan, result.mutations)
+        new_plan = plan
+        if result.mutations and result.target_week_number is not None:
+            new_plan, _ = apply_mutations_to_plan(
+                plan, result.mutations, result.target_week_number
+            )
+        elif result.mutations:
+            new_plan = plan.model_copy(deep=True)
         assert_plan_still_valid(new_plan)
         new_state = apply_plan_state_delta(state, result.plan_state_delta)
 
@@ -986,6 +1047,77 @@ class Store:
                 "SELECT * FROM adaptation_events WHERE id = ?", (event_id,)
             ).fetchone()
             return dict(row) if row else None
+
+    # ------------------------------------------------------------------
+    # Weekly check-ins
+    # ------------------------------------------------------------------
+
+    def save_weekly_checkin(
+        self,
+        athlete_id: str,
+        plan_id: str | None,
+        week_number: int | None,
+        conversation_id: str | None,
+        context: WeeklyContext,
+    ) -> str:
+        cid = _new_id()
+        ctx_json = context.model_dump()
+        if self._use_supabase:
+            self._sb.table("weekly_checkins").insert(
+                {
+                    "id": cid,
+                    "athlete_id": athlete_id,
+                    "plan_id": plan_id,
+                    "week_number": week_number,
+                    "conversation_id": conversation_id,
+                    "extracted_context": ctx_json,
+                }
+            ).execute()
+            return cid
+        with self._sqlite() as conn:
+            conn.execute(
+                """INSERT INTO weekly_checkins
+                (id, athlete_id, plan_id, week_number, conversation_id,
+                 extracted_context, created_at)
+                VALUES (?,?,?,?,?,?,?)""",
+                (
+                    cid,
+                    athlete_id,
+                    plan_id,
+                    week_number,
+                    conversation_id,
+                    json.dumps(ctx_json),
+                    _utcnow(),
+                ),
+            )
+        return cid
+
+    def get_weekly_checkin(
+        self, checkin_id: str, athlete_id: str
+    ) -> dict[str, Any] | None:
+        if self._use_supabase:
+            res = (
+                self._sb.table("weekly_checkins")
+                .select("*")
+                .eq("id", checkin_id)
+                .eq("athlete_id", athlete_id)
+                .limit(1)
+                .execute()
+            )
+            row = res.data[0] if res.data else None
+        else:
+            with self._sqlite() as conn:
+                row = conn.execute(
+                    "SELECT * FROM weekly_checkins WHERE id = ? AND athlete_id = ?",
+                    (checkin_id, athlete_id),
+                ).fetchone()
+                row = dict(row) if row else None
+        if not row:
+            return None
+        ctx = row.get("extracted_context")
+        if isinstance(ctx, str) and ctx:
+            row["extracted_context"] = json.loads(ctx)
+        return row
 
     # ------------------------------------------------------------------
     # Chat

@@ -157,11 +157,23 @@ export const api = {
       body: JSON.stringify(data),
     }),
 
-  evaluateAdaptation: () =>
+  evaluateAdaptation: (opts?: { weeklyCheckinId?: string }) =>
     apiFetch<import("./types").AdaptationEvent>("/api/adaptations/evaluate", {
       method: "POST",
-      body: "{}",
+      body: JSON.stringify(opts?.weeklyCheckinId ? { weeklyCheckinId: opts.weeklyCheckinId } : {}),
     }),
+
+  extractWeeklyContext: (
+    messages: { role: string; content: string }[],
+    weekNumber?: number
+  ) =>
+    apiFetch<{ checkinId: string; context: Record<string, unknown> }>(
+      "/api/adaptations/weekly-context/extract",
+      {
+        method: "POST",
+        body: JSON.stringify({ messages, weekNumber }),
+      }
+    ),
 
   getPendingAdaptation: () =>
     apiFetch<{ adaptation: import("./types").AdaptationEvent | null }>(

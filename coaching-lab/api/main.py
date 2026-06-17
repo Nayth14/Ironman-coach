@@ -15,19 +15,20 @@ from pydantic import BaseModel, Field
 
 from engine import adaptation, extract, fixtures, plan as plan_builder, readiness
 from engine import llm
+from engine import weekly_context as weekly_ctx
 from engine.adaptation.telemetry import TelemetryEvent, emit
 from engine.models import (
     AdaptationDecision,
     AdaptationResult,
     AthleteProfile,
-    PhaseName,
     PlanMutation,
     PlanState,
     ReadinessResult,
     TrainingPlan,
+    WeeklyContext,
     WorkoutCompletion,
 )
-from engine.prompts import COACHING_SYSTEM, ONBOARDING_SYSTEM, SUMMARY_SYSTEM
+from engine.prompts import COACHING_SYSTEM, ONBOARDING_SYSTEM, SUMMARY_SYSTEM, WEEKLY_CHECKIN_SYSTEM
 
 from api.deps import require_auth, require_auth_athlete, require_guest, store
 from api.persistence.store import Store, get_store
@@ -92,6 +93,21 @@ class AdaptationAcceptRequest(BaseModel):
 
 class CoachingChatRequest(BaseModel):
     messages: list[ChatMessage]
+
+
+class WeeklyCheckinChatRequest(BaseModel):
+    messages: list[ChatMessage]
+
+
+class WeeklyContextExtractRequest(BaseModel):
+    messages: list[ChatMessage]
+    week_number: int | None = None
+
+
+class EvaluateAdaptationRequest(BaseModel):
+    weekly_checkin_id: str | None = Field(default=None, alias="weeklyCheckinId")
+
+    model_config = {"populate_by_name": True}
 
 
 # ---------------------------------------------------------------------------
@@ -336,8 +352,74 @@ def complete_workout(
     return result
 
 
+@app.post("/api/chat/weekly-checkin")
+def weekly_checkin_chat(
+    body: WeeklyCheckinChatRequest,
+    auth: tuple[str, dict] = Depends(require_auth_athlete),
+    s: Store = Depends(store),
+):
+    _, athlete = auth
+    messages = [m.model_dump() for m in body.messages]
+
+    def stream():
+        full = ""
+        try:
+            for delta in llm.stream_chat(WEEKLY_CHECKIN_SYSTEM, messages):
+                full += delta
+                visible = weekly_ctx.strip_ready_token(full)
+                yield _sse_event("token", {"content": delta, "full": visible})
+            clean = weekly_ctx.strip_ready_token(full)
+            yield _sse_event(
+                "done",
+                {"content": clean, "ready": weekly_ctx.conversation_is_ready(full)},
+            )
+        except Exception as exc:
+            yield _sse_event("error", {"message": str(exc)})
+
+    conv = s.get_or_create_chat(athlete["id"], "weekly_checkin")
+    s.save_chat_messages(conv["id"], messages)
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
+
+
+@app.post("/api/adaptations/weekly-context/extract")
+def extract_weekly_context_endpoint(
+    body: WeeklyContextExtractRequest,
+    auth: tuple[str, dict] = Depends(require_auth_athlete),
+    s: Store = Depends(store),
+):
+    _, athlete = auth
+    if not weekly_ctx.llm_available():
+        raise HTTPException(503, "Weekly check-in requires OpenAI configuration")
+
+    messages = [m.model_dump() for m in body.messages]
+    plan_row = s.get_current_plan(athlete["id"])
+    plan_id = plan_row["id"] if plan_row else None
+
+    try:
+        context = weekly_ctx.extract_weekly_context(messages, body.week_number)
+    except Exception as exc:
+        raise HTTPException(500, f"Weekly context extraction failed: {exc}") from exc
+
+    conv = s.get_or_create_chat(athlete["id"], "weekly_checkin")
+    s.save_chat_messages(conv["id"], messages)
+    checkin_id = s.save_weekly_checkin(
+        athlete["id"],
+        plan_id,
+        context.week_number or body.week_number,
+        conv["id"],
+        context,
+    )
+
+    return {
+        "checkinId": checkin_id,
+        "context": json.loads(context.model_dump_json()),
+    }
+
+
 @app.post("/api/adaptations/evaluate")
 def evaluate_adaptation(
+    body: EvaluateAdaptationRequest = EvaluateAdaptationRequest(),
     auth: tuple[str, dict] = Depends(require_auth_athlete),
     s: Store = Depends(store),
 ):
@@ -353,26 +435,29 @@ def evaluate_adaptation(
     plan_id = plan_row["id"] if plan_row else None
     plan_state = s.get_plan_state(plan_id) if plan_id else PlanState()
     training_plan = None
-    phase = PhaseName.BASE
-    week_number = 1
-    is_deload_week = False
     if plan_row:
         training_plan = s.build_training_plan(athlete["id"], plan_row)
-        if training_plan.weeks:
-            week_number = training_plan.weeks[0].week_number
-            phase = training_plan.weeks[0].phase
-            is_deload_week = training_plan.weeks[0].is_deload
+
+    weekly_context: WeeklyContext | None = None
+    weekly_checkin_id: str | None = None
+    if body.weekly_checkin_id:
+        checkin = s.get_weekly_checkin(body.weekly_checkin_id, athlete["id"])
+        if not checkin:
+            raise HTTPException(404, "Weekly check-in not found")
+        weekly_checkin_id = checkin["id"]
+        raw_ctx = checkin.get("extracted_context") or {}
+        weekly_context = WeeklyContext.model_validate(raw_ctx)
 
     result = adaptation.evaluate(
         profile,
         completions,
         plan_state=plan_state,
         plan=training_plan,
-        phase=phase,
-        week_number=week_number,
-        is_deload_week=is_deload_week,
+        weekly_context=weekly_context,
     )
-    event_id = s.save_adaptation(athlete["id"], plan_id, result)
+    event_id = s.save_adaptation(
+        athlete["id"], plan_id, result, weekly_checkin_id=weekly_checkin_id
+    )
     emit(
         TelemetryEvent.TRIGGERED,
         athlete_id=athlete["id"],
@@ -390,6 +475,13 @@ def evaluate_adaptation(
         "planStateDelta": result.plan_state_delta,
         "playbookVersion": result.playbook_version,
         "insufficientData": result.insufficient_data,
+        "reviewedWeekNumber": result.reviewed_week_number,
+        "targetWeekNumber": result.target_week_number,
+        "weeklyContextSummary": result.weekly_context_summary,
+        "conformanceStatus": (
+            result.conformance_status.value if result.conformance_status else None
+        ),
+        "playbookRuleCited": result.playbook_rule_cited,
     }
     if result.diff:
         payload["diff"] = result.diff.model_dump()
@@ -420,6 +512,11 @@ def _serialize_adaptation_event(event: dict[str, Any]) -> dict[str, Any]:
         "planStateDelta": event.get("plan_state_delta") or {},
         "playbookVersion": event.get("playbook_version"),
         "diff": event.get("diff"),
+        "reviewedWeekNumber": event.get("reviewed_week_number"),
+        "targetWeekNumber": event.get("target_week_number"),
+        "weeklyContextSummary": event.get("weekly_context_summary"),
+        "conformanceStatus": event.get("conformance_status"),
+        "playbookRuleCited": event.get("playbook_rule_cited"),
         "user_accepted": event.get("user_accepted"),
         "applicationStatus": event.get("application_status"),
     }
@@ -474,6 +571,8 @@ def accept_adaptation(
         plan_state_delta=event.get("plan_state_delta") or {},
         playbook_version=event.get("playbook_version"),
         diff=None,
+        reviewed_week_number=event.get("reviewed_week_number"),
+        target_week_number=event.get("target_week_number"),
     )
 
     try:

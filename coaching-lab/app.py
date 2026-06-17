@@ -16,8 +16,13 @@ from dotenv import load_dotenv
 
 from engine import adaptation, extract, fixtures, plan as plan_builder, readiness, strength
 from engine import llm
+from engine.adaptation.apply import apply_mutations_to_plan
+from engine.adaptation.trajectory import apply_plan_state_delta
 from engine.models import (
+    AdaptationResult,
     AthleteProfile,
+    PlanState,
+    PurposeTag,
     Sport,
     WorkoutCompletion,
 )
@@ -47,12 +52,15 @@ def _init_state() -> None:
     st.session_state.setdefault("profile", None)
     st.session_state.setdefault("readiness", None)
     st.session_state.setdefault("plan", None)
+    st.session_state.setdefault("plan_state", PlanState())
+    st.session_state.setdefault("pending_adaptation", None)
     st.session_state.setdefault("summary", None)
 
 
 def _reset() -> None:
-    for key in ["messages", "profile", "readiness", "plan", "summary"]:
+    for key in ["messages", "profile", "readiness", "plan", "summary", "pending_adaptation"]:
         st.session_state[key] = [] if key == "messages" else None
+    st.session_state.plan_state = PlanState()
 
 
 # ---------------------------------------------------------------------------
@@ -64,6 +72,16 @@ def _build_from_profile(profile: AthleteProfile) -> None:
     st.session_state.profile = profile
     st.session_state.readiness = readiness.assess(profile)
     st.session_state.plan = plan_builder.generate_plan(profile)
+    st.session_state.plan_state = PlanState()
+    st.session_state.pending_adaptation = None
+
+
+def _workout_is_optional(w) -> bool:
+    return not w.is_key_session and w.purpose_tag in (
+        PurposeTag.AEROBIC_BASE,
+        PurposeTag.ECONOMY,
+        PurposeTag.RECOVERY,
+    )
 
 
 def _generate_summary() -> str:
@@ -252,20 +270,85 @@ def _render_weeks() -> None:
             st.dataframe(rows, hide_index=True, use_container_width=True)
 
 
+def _render_adaptation_result(result: AdaptationResult) -> None:
+    decision_color = {
+        "progress": "🟢",
+        "hold": "🟡",
+        "deload": "🔴",
+        "bike_substitute": "🔵",
+        "gut_training": "🟠",
+    }
+    st.markdown(
+        f"### {decision_color.get(result.decision.value, '')} "
+        f"{result.decision.value.replace('_', ' ').title()}"
+    )
+    if result.reviewed_week_number is not None and result.target_week_number is not None:
+        st.info(
+            f"Based on **week {result.reviewed_week_number}** feedback → "
+            f"changes apply to **week {result.target_week_number}**."
+        )
+    elif result.reviewed_week_number is not None and result.target_week_number is None:
+        st.info(
+            f"Based on **week {result.reviewed_week_number}** feedback → "
+            "workout changes will apply when the next week is materialized "
+            "(trajectory updated now)."
+        )
+    st.caption(result.rationale)
+    if result.insufficient_data:
+        st.warning("Insufficient completion data — engine will hold until more feedback is logged.")
+    st.markdown("**Signals**")
+    for s in result.signals:
+        st.markdown(f"- {s}")
+    st.markdown("**Changes**")
+    for c in result.changes:
+        st.markdown(f"- {c}")
+    if result.diff:
+        st.markdown("**Preview**")
+        st.markdown(
+            f"Weekly hours: **{result.diff.before_hours:.1f}h** → "
+            f"**{result.diff.after_hours:.1f}h**"
+        )
+        for w in result.diff.changed_workouts:
+            st.markdown(f"- {w.title}: {w.change_summary}")
+        for sub in result.diff.substitutions:
+            st.markdown(f"- ↔ {sub}")
+    if result.playbook_version:
+        st.caption(f"Ruleset v{result.playbook_version}")
+
+
+def _apply_pending_adaptation(result: AdaptationResult) -> None:
+    tp = st.session_state.plan
+    if result.mutations and tp.weeks and result.target_week_number is not None:
+        new_plan, _ = apply_mutations_to_plan(
+            tp, result.mutations, result.target_week_number
+        )
+        st.session_state.plan = new_plan
+    if result.plan_state_delta:
+        st.session_state.plan_state = apply_plan_state_delta(
+            st.session_state.plan_state, result.plan_state_delta
+        )
+
+
 def _render_adaptation_sim() -> None:
     st.markdown("**Simulate a week of feedback**")
-    st.caption("Fake completions to test the adaptation engine.")
+    st.caption(
+        "Log how week 1 went, evaluate, then accept to update **week 2** above."
+    )
 
     tp = st.session_state.plan
-    week1 = tp.weeks[0] if tp.weeks else None
-    if not week1:
+    reviewed_week = tp.weeks[0] if tp.weeks else None
+    if not reviewed_week:
         return
 
+    pending: AdaptationResult | None = st.session_state.pending_adaptation
+
+    st.markdown(f"**Week {reviewed_week.week_number} workouts**")
     completions: list[WorkoutCompletion] = []
     with st.form("sim_form"):
-        for w in week1.workouts:
+        for w in reviewed_week.workouts:
             cols = st.columns([3, 1, 1])
-            cols[0].markdown(f"{SPORT_EMOJI.get(w.sport, '')} {w.title}")
+            key_tag = " ★" if w.is_key_session else ""
+            cols[0].markdown(f"{SPORT_EMOJI.get(w.sport, '')} {w.title}{key_tag}")
             done = cols[1].checkbox("Done", value=True, key=f"done_{w.id}")
             rpe = cols[2].slider("RPE", 1, 10, 5, key=f"rpe_{w.id}")
             completions.append(
@@ -274,37 +357,67 @@ def _render_adaptation_sim() -> None:
                     sport=w.sport,
                     completed=done,
                     rpe=rpe,
+                    is_key_session=w.is_key_session,
+                    is_optional=_workout_is_optional(w),
+                    week_number=reviewed_week.week_number,
                 )
             )
         fatigue = st.text_input(
             "Fatigue flags (comma-separated, e.g. 'left knee, poor sleep')", ""
         )
+        weekly_notes = st.text_area(
+            "Anything else that happened this week (natural language)",
+            "",
+            height=80,
+        )
         submitted = st.form_submit_button("Evaluate adaptation")
 
     if submitted:
+        from engine.models import WeeklyContext
+
+        weekly_context = None
         if fatigue.strip():
             tags = [t.strip() for t in fatigue.split(",") if t.strip()]
             if completions:
                 completions[0].fatigue_flags = tags
-        result = adaptation.evaluate(st.session_state.profile, completions)
-        decision_color = {
-            "progress": "🟢",
-            "hold": "🟡",
-            "deload": "🔴",
-            "bike_substitute": "🔵",
-            "gut_training": "🟠",
-        }
-        st.markdown(
-            f"### {decision_color.get(result.decision.value, '')} "
-            f"{result.decision.value.replace('_', ' ').title()}"
+        if weekly_notes.strip():
+            flags = [t.strip() for t in fatigue.split(",") if t.strip()] if fatigue.strip() else []
+            weekly_context = WeeklyContext(
+                summary=weekly_notes.strip()[:200],
+                fatigue_flags=flags,
+                life_stress=any(
+                    k in weekly_notes.lower()
+                    for k in ("sleep", "stress", "travel", "work")
+                ),
+            )
+        st.session_state.pending_adaptation = adaptation.evaluate(
+            st.session_state.profile,
+            completions,
+            plan_state=st.session_state.plan_state,
+            plan=tp,
+            reviewed_week_number=reviewed_week.week_number,
+            weekly_context=weekly_context,
         )
-        st.caption(result.rationale)
-        st.markdown("**Signals**")
-        for s in result.signals:
-            st.markdown(f"- {s}")
-        st.markdown("**Changes**")
-        for c in result.changes:
-            st.markdown(f"- {c}")
+        st.rerun()
+
+    if pending:
+        st.divider()
+        st.markdown("**Pending adaptation**")
+        _render_adaptation_result(pending)
+        accept_col, dismiss_col = st.columns(2)
+        if accept_col.button("Accept changes", type="primary", key="adapt_accept"):
+            _apply_pending_adaptation(pending)
+            st.session_state.pending_adaptation = None
+            target = pending.target_week_number
+            st.success(
+                f"Plan updated — see week {target} in materialized weeks above."
+                if target
+                else "Trajectory updated — see materialized weeks above."
+            )
+            st.rerun()
+        if dismiss_col.button("Dismiss", key="adapt_dismiss"):
+            st.session_state.pending_adaptation = None
+            st.rerun()
 
 
 def _render_inspection() -> None:

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date
 from enum import Enum
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -109,6 +109,12 @@ class AdaptationDecision(str, Enum):
     DELOAD = "deload"
     BIKE_SUBSTITUTE = "bike_substitute"
     GUT_TRAINING = "gut_training"
+
+
+class ConformanceStatus(str, Enum):
+    MATCHED = "matched"
+    REJECTED = "rejected"
+    SKIPPED = "skipped"
 
 
 class ProgressionRate(str, Enum):
@@ -287,6 +293,7 @@ class WorkoutCompletion(BaseModel):
     notes: Optional[str] = None
     is_key_session: bool = False
     is_optional: bool = False
+    week_number: Optional[int] = None
     completed_at: Optional[date] = None
 
 
@@ -336,6 +343,25 @@ class AdaptationDiff(BaseModel):
     substitutions: list[str] = Field(default_factory=list)
 
 
+class WeeklyContext(BaseModel):
+    week_number: int | None = None
+    summary: str = ""
+    fatigue_flags: list[str] = Field(default_factory=list)
+    illness_days_off: int = 0
+    life_stress: bool = False
+    missed_key_reason: str | None = None
+    athlete_quotes: list[str] = Field(default_factory=list)
+    confidence: Literal["high", "medium", "low"] = "medium"
+
+
+class LlmAdaptationProposal(BaseModel):
+    decision: AdaptationDecision
+    rationale: str
+    signal_augmentations: WeeklyContext
+    playbook_rule_cited: str = ""
+    confidence: Literal["high", "medium", "low"] = "medium"
+
+
 class AdaptationResult(BaseModel):
     decision: AdaptationDecision
     signals: list[str]
@@ -346,6 +372,13 @@ class AdaptationResult(BaseModel):
     playbook_version: Optional[str] = None
     diff: Optional[AdaptationDiff] = None
     insufficient_data: bool = False
+    reviewed_week_number: Optional[int] = None
+    target_week_number: Optional[int] = None
+    weekly_context_summary: Optional[str] = None
+    conformance_status: Optional[ConformanceStatus] = None
+    playbook_rule_cited: Optional[str] = None
+    canonical_decision: Optional[AdaptationDecision] = None
+    llm_proposed_decision: Optional[AdaptationDecision] = None
 
 
 # Pydantic v2 needs this for the self-referencing WorkoutStep.

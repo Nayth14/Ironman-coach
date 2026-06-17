@@ -19,6 +19,7 @@ from engine.models import (
     StrengthBackground,
     StrengthEquipment,
     WorkoutCompletion,
+    WeeklyContext,
 )
 
 
@@ -170,3 +171,22 @@ def test_playbook_golden_ids_present():
     ids = {s.id for s in loaded.spec.golden_scenarios}
     for gid in [f"G{i}" for i in range(1, 15)]:
         assert gid in ids
+
+
+def test_g4_nl_weekly_context_poor_sleep_hold():
+    """NL weekly context: easy run RPE 8 + poor sleep -> hold (§5.1)."""
+    completions = [
+        _completion(workout_id="w1", sport=Sport.RUN, rpe=8),
+        _completion(workout_id="w2", rpe=6, is_key=True),
+        _completion(workout_id="w3", rpe=5),
+    ]
+    ctx = WeeklyContext(
+        fatigue_flags=["poor sleep"],
+        life_stress=True,
+        summary="Easy run felt hard and I slept badly all week",
+    )
+    result = adaptation.evaluate(
+        _profile(), completions, phase=PhaseName.BASE, weekly_context=ctx
+    )
+    assert result.decision == AdaptationDecision.HOLD
+    assert result.decision != AdaptationDecision.DELOAD

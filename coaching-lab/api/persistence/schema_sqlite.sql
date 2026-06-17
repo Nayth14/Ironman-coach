@@ -102,8 +102,28 @@ CREATE TABLE IF NOT EXISTS adaptation_events (
   post_checksum TEXT,
   application_status TEXT DEFAULT 'pending',
   application_error TEXT,
-  diff TEXT
+  diff TEXT,
+  reviewed_week_number INTEGER,
+  target_week_number INTEGER,
+  weekly_checkin_id TEXT,
+  canonical_decision TEXT,
+  llm_proposed_decision TEXT,
+  conformance_status TEXT,
+  playbook_rule_cited TEXT,
+  weekly_context_summary TEXT
 );
+
+CREATE TABLE IF NOT EXISTS weekly_checkins (
+  id TEXT PRIMARY KEY,
+  athlete_id TEXT NOT NULL,
+  plan_id TEXT,
+  week_number INTEGER,
+  conversation_id TEXT,
+  extracted_context TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_weekly_checkins_athlete ON weekly_checkins(athlete_id);
 
 CREATE TABLE IF NOT EXISTS chat_conversations (
   id TEXT PRIMARY KEY,
