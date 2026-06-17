@@ -131,8 +131,13 @@ export interface AdaptationEvent {
   playbookVersion?: string;
   diff?: AdaptationDiff;
   insufficientData?: boolean;
+  reviewedWeekNumber?: number;
+  targetWeekNumber?: number;
   applicationStatus?: string;
   user_accepted?: boolean | null;
+  weeklyContextSummary?: string | null;
+  conformanceStatus?: string | null;
+  playbookRuleCited?: string | null;
 }
 
 export interface ChatMessage {

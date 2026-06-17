@@ -6,7 +6,14 @@ from dataclasses import dataclass, field
 from datetime import date, timedelta
 
 from engine.adaptation.spec import PlaybookSpec
-from engine.models import AthleteProfile, PhaseName, PlanState, Sport, WorkoutCompletion
+from engine.models import (
+    AthleteProfile,
+    PhaseName,
+    PlanState,
+    Sport,
+    WeeklyContext,
+    WorkoutCompletion,
+)
 
 
 @dataclass
@@ -53,6 +60,12 @@ def _matches_keywords(text: str, keywords: list[str]) -> bool:
     return any(k in low for k in keywords)
 
 
+def _weekly_fatigue_flags(weekly_context: WeeklyContext | None) -> list[str]:
+    if not weekly_context:
+        return []
+    return list(weekly_context.fatigue_flags)
+
+
 def aggregate_signals(
     profile: AthleteProfile,
     completions: list[WorkoutCompletion],
@@ -62,8 +75,12 @@ def aggregate_signals(
     is_deload_week: bool = False,
     illness_days_off: int = 0,
     ref_date: date | None = None,
+    weekly_context: WeeklyContext | None = None,
 ) -> SignalSummary:
     """Aggregate signals for the 7-day decision window with 14-day gating."""
+    if weekly_context and weekly_context.illness_days_off:
+        illness_days_off = max(illness_days_off, weekly_context.illness_days_off)
+
     t = spec.thresholds
     w7 = _window_completions(completions, spec.windows.decision_days, ref_date)
     w14_prior = _window_completions(completions, spec.windows.trend_days, ref_date)
@@ -87,8 +104,13 @@ def aggregate_signals(
         weighted += 1.0
 
     fatigue_flags = [f for c in w7 for f in c.fatigue_flags]
+    fatigue_flags.extend(_weekly_fatigue_flags(weekly_context))
     if fatigue_flags:
         flags.append(f"Fatigue flags: {', '.join(sorted(set(fatigue_flags)))}")
+        weighted += 1.0
+
+    if weekly_context and weekly_context.life_stress:
+        flags.append("Life stress / poor sleep reported")
         weighted += 1.0
 
     missed = [c for c in w7 if not c.completed]
@@ -116,12 +138,22 @@ def aggregate_signals(
                 run_complaints.append(f)
             if injury_areas and any(area in f.lower() for area in injury_areas):
                 run_complaints.append(f)
+    for f in _weekly_fatigue_flags(weekly_context):
+        if _matches_keywords(f, spec.orthopedic_keywords):
+            run_complaints.append(f)
+        if injury_areas and any(area in f.lower() for area in injury_areas):
+            run_complaints.append(f)
     orthopedic_count = len(run_complaints)
     has_orthopedic = orthopedic_count >= 1
 
     gi_sessions = 0
     for c in w7:
         for f in c.fatigue_flags:
+            if _matches_keywords(f, spec.gi_keywords):
+                gi_sessions += 1
+                break
+    if gi_sessions == 0:
+        for f in _weekly_fatigue_flags(weekly_context):
             if _matches_keywords(f, spec.gi_keywords):
                 gi_sessions += 1
                 break

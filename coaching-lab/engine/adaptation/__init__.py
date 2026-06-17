@@ -6,21 +6,33 @@ from datetime import date
 from pathlib import Path
 
 from engine.adaptation.apply import apply_mutations_to_plan
+from engine.adaptation.conformance import validate_playbook_conformance
 from engine.adaptation.decide import decide
 from engine.adaptation.guardrails import validate_mutations_against_guardrails
+from engine.adaptation.llm_propose import propose_adaptation
 from engine.adaptation.loader import load_playbook
 from engine.adaptation.mutate import build_mutations
 from engine.adaptation.signals import aggregate_signals
+from engine.adaptation.targets import (
+    infer_reviewed_week_number,
+    resolve_mutation_target_week,
+    week_by_number,
+)
 from engine.adaptation.trajectory import compute_plan_state_delta
+from engine.adaptation.weekly_merge import merge_weekly_context
 from engine.models import (
     AdaptationDecision,
     AdaptationResult,
     AthleteProfile,
+    ConformanceStatus,
+    LlmAdaptationProposal,
     PhaseName,
     PlanState,
     TrainingPlan,
+    WeeklyContext,
     WorkoutCompletion,
 )
+from engine.weekly_context import llm_available
 
 # Re-export guardrail constants for backward compatibility.
 MAX_WEEKLY_INCREASE = 0.10
@@ -93,30 +105,79 @@ def evaluate(
     completions: list[WorkoutCompletion],
     plan_state: PlanState | None = None,
     plan: TrainingPlan | None = None,
-    phase: PhaseName = PhaseName.BASE,
-    week_number: int = 1,
-    is_deload_week: bool = False,
+    phase: PhaseName | None = None,
+    reviewed_week_number: int | None = None,
+    week_number: int | None = None,
+    is_deload_week: bool | None = None,
     illness_days_off: int = 0,
     playbook_path: Path | None = None,
+    weekly_context: WeeklyContext | None = None,
+    llm_proposal: LlmAdaptationProposal | None = None,
 ) -> AdaptationResult:
-    """Decide how to adjust the upcoming week from recent feedback."""
+    """Decide how to adjust the upcoming week from recent feedback.
+
+    Feedback describes ``reviewed_week_number``; micro-mutations apply to the
+    next materialized week (reviewed + 1). Macro trajectory updates use
+    ``plan_state_delta``.
+    """
     loaded = load_playbook(playbook_path)
     spec = loaded.spec
     state = plan_state or PlanState()
+
+    reviewed = reviewed_week_number or week_number or infer_reviewed_week_number(
+        completions, plan
+    )
+    target = resolve_mutation_target_week(reviewed, plan)
+    reviewed_week = week_by_number(plan, reviewed) if plan else None
+    target_week = week_by_number(plan, target) if plan and target else None
+
+    signal_phase = phase or (reviewed_week.phase if reviewed_week else PhaseName.BASE)
+    signal_is_deload = (
+        is_deload_week if is_deload_week is not None else (reviewed_week.is_deload if reviewed_week else False)
+    )
+    mutate_phase = target_week.phase if target_week else signal_phase
+    mutate_is_deload = target_week.is_deload if target_week else signal_is_deload
+
+    base_signals = aggregate_signals(
+        profile,
+        completions,
+        spec,
+        plan_state=state,
+        phase=signal_phase,
+        is_deload_week=signal_is_deload,
+        illness_days_off=illness_days_off,
+    )
+
+    proposal = llm_proposal
+    if weekly_context and proposal is None and llm_available():
+        proposal = propose_adaptation(
+            profile, completions, base_signals, weekly_context, loaded
+        )
+
+    merged_context = merge_weekly_context(
+        weekly_context,
+        proposal.signal_augmentations if proposal else None,
+    )
 
     signals = aggregate_signals(
         profile,
         completions,
         spec,
         plan_state=state,
-        phase=phase,
-        is_deload_week=is_deload_week,
+        phase=signal_phase,
+        is_deload_week=signal_is_deload,
         illness_days_off=illness_days_off,
+        weekly_context=merged_context,
     )
 
     decision, rationale_key = decide(
-        profile, signals, spec, plan_state=state, phase=phase, is_deload_week=is_deload_week
+        profile, signals, spec, plan_state=state, phase=signal_phase, is_deload_week=signal_is_deload
     )
+    canonical_decision = decision
+
+    conformance = validate_playbook_conformance(proposal, canonical_decision)
+    playbook_rule_cited: str | None = None
+    llm_proposed_decision = proposal.decision if proposal else None
 
     insufficient = rationale_key == "insufficient_data"
     mutations = build_mutations(
@@ -125,12 +186,14 @@ def evaluate(
         signals,
         spec,
         plan_state=state,
-        phase=phase,
+        phase=mutate_phase,
         rationale_key=rationale_key,
-        is_deload_week=is_deload_week,
+        is_deload_week=mutate_is_deload,
     )
 
-    state_delta = compute_plan_state_delta(decision, state, spec, week_number=week_number)
+    state_delta = compute_plan_state_delta(
+        decision, state, spec, week_number=reviewed
+    )
 
     for m in mutations:
         if m.op.value == "set_run_volume_cap" and m.value is not None:
@@ -140,10 +203,12 @@ def evaluate(
             state_delta["gut_carb_floor"] = spec.gut_training.carb_floor_default
 
     diff = None
-    if plan and plan.weeks and mutations:
-        prior_hours = plan.weeks[0].target_hours
-        preview_plan, diff = apply_mutations_to_plan(plan, mutations, week_number)
-        new_hours = preview_plan.weeks[0].target_hours if preview_plan.weeks else prior_hours
+    if plan and mutations and target is not None:
+        prior_week = reviewed_week or week_by_number(plan, reviewed)
+        prior_hours = prior_week.target_hours if prior_week else 0.0
+        preview_plan, diff = apply_mutations_to_plan(plan, mutations, target)
+        target_after = week_by_number(preview_plan, target)
+        new_hours = target_after.target_hours if target_after else prior_hours
         guard_violations = validate_mutations_against_guardrails(
             mutations, spec, prior_hours, new_hours
         )
@@ -151,9 +216,15 @@ def evaluate(
             decision = AdaptationDecision.HOLD
             rationale_key = "guardrail_fallback"
             mutations = build_mutations(
-                decision, profile, signals, spec, plan_state=state, phase=phase
+                decision,
+                profile,
+                signals,
+                spec,
+                plan_state=state,
+                phase=mutate_phase,
+                is_deload_week=mutate_is_deload,
             )
-            preview_plan, diff = apply_mutations_to_plan(plan, mutations, week_number)
+            preview_plan, diff = apply_mutations_to_plan(plan, mutations, target)
             signals_msgs = signals.flag_messages + guard_violations
         else:
             signals_msgs = signals.flag_messages
@@ -165,16 +236,33 @@ def evaluate(
     if decision == AdaptationDecision.GUT_TRAINING and "Fueling intolerance in sessions" not in signals_msgs:
         signals_msgs = signals_msgs + ["Fueling intolerance in sessions"]
 
+    if conformance.status == ConformanceStatus.MATCHED and conformance.accepted_rationale:
+        rationale = conformance.accepted_rationale
+        playbook_rule_cited = conformance.playbook_rule_cited
+    else:
+        rationale = _build_rationale(
+            decision, signals_msgs, rationale_key, spec.narrator_templates
+        )
+
+    weekly_summary = merged_context.summary if merged_context else None
+
     return AdaptationResult(
         decision=decision,
         signals=signals_msgs,
         changes=_build_changes(decision, mutations),
-        rationale=_build_rationale(decision, signals_msgs, rationale_key, spec.narrator_templates),
+        rationale=rationale,
         mutations=mutations,
         plan_state_delta=state_delta,
         playbook_version=loaded.checksum,
         diff=diff,
         insufficient_data=insufficient,
+        reviewed_week_number=reviewed,
+        target_week_number=target,
+        weekly_context_summary=weekly_summary,
+        conformance_status=conformance.status,
+        playbook_rule_cited=playbook_rule_cited,
+        canonical_decision=canonical_decision,
+        llm_proposed_decision=llm_proposed_decision,
     )
 
 

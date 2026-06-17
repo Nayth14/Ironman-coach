@@ -6,6 +6,7 @@ import { WorkoutCard } from "../components/WorkoutCard";
 import { SportIcon } from "../components/SportIcon";
 import { CoachChatFab, CoachChatPanel } from "../components/CoachChat";
 import { AdaptationBanner } from "../components/AdaptationBanner";
+import { WeeklyCheckinPanel } from "../components/WeeklyCheckinPanel";
 import { api } from "../lib/api";
 import { ensureGuestId } from "../lib/guest";
 import { formatDuration } from "../lib/config";
@@ -64,17 +65,16 @@ export function OverviewPage() {
     [filtered]
   );
 
+  const hasCompletions = useMemo(
+    () => workouts.some((w) => w.status === "completed"),
+    [workouts]
+  );
+
   const handleComplete = useCallback(
     async (w: Workout) => {
       await api.completeWorkout(w.id, { completed: true, rpe: 5 });
       qc.invalidateQueries({ queryKey: ["currentPlan"] });
       qc.invalidateQueries({ queryKey: ["workouts"] });
-      try {
-        const ev = await api.evaluateAdaptation();
-        setAdaptation(ev);
-      } catch {
-        /* need more completions */
-      }
     },
     [qc]
   );
@@ -83,6 +83,8 @@ export function OverviewPage() {
     const id = adaptation?.eventId || adaptation?.id;
     if (id) await api.acceptAdaptation(id, true);
     setAdaptation(null);
+    qc.invalidateQueries({ queryKey: ["currentPlan"] });
+    qc.invalidateQueries({ queryKey: ["workouts"] });
   };
 
   const handleAdaptDismiss = async () => {
@@ -125,6 +127,13 @@ export function OverviewPage() {
           adaptation={adaptation}
           onAccept={handleAdaptAccept}
           onDismiss={handleAdaptDismiss}
+        />
+      )}
+
+      {!adaptation && (
+        <WeeklyCheckinPanel
+          hasCompletions={hasCompletions}
+          onAdaptation={setAdaptation}
         />
       )}
 
