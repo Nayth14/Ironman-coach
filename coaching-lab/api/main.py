@@ -119,6 +119,18 @@ def _sse_event(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _sse_response(stream_gen) -> StreamingResponse:
+    return StreamingResponse(
+        stream_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 def _generate_summary(profile: AthleteProfile, verdict: ReadinessResult, tp: TrainingPlan) -> str:
     phase_lines = ", ".join(
         f"{p.name.value} (wk {p.start_week}-{p.end_week})" for p in tp.phases
@@ -231,7 +243,7 @@ def onboarding_chat(body: OnboardingChatRequest, s: Store = Depends(store)):
         except Exception as exc:
             yield _sse_event("error", {"message": str(exc)})
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return _sse_response(stream)
 
 
 def _plan_generate_payload(
@@ -297,7 +309,7 @@ def generate_plan(
         except Exception as exc:
             yield _sse_event("error", {"message": f"Plan generation failed: {exc}"})
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return _sse_response(stream)
 
 
 @app.post("/api/plans/{plan_id}/activate")
@@ -404,7 +416,7 @@ def weekly_checkin_chat(
     conv = s.get_or_create_chat(athlete["id"], "weekly_checkin")
     s.save_chat_messages(conv["id"], messages)
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return _sse_response(stream)
 
 
 @app.post("/api/adaptations/weekly-context/extract")
@@ -659,7 +671,7 @@ def coaching_chat(
         except Exception as exc:
             yield _sse_event("error", {"message": str(exc)})
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return _sse_response(stream)
 
 
 @app.get("/api/fixtures")

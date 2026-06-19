@@ -1,6 +1,6 @@
 import { Navigate, Outlet, useLocation } from "react-router-dom";
 import { useAuth } from "../lib/auth";
-import { activatePendingPlanIfNeeded, linkGuestIfNeeded } from "../lib/authLink";
+import { runAuthBootstrap } from "../lib/authLink";
 import { useEffect, useState } from "react";
 
 export function RequireAuth() {
@@ -17,24 +17,16 @@ export function RequireAuth() {
     setBootstrapError(null);
 
     (async () => {
-      const link = await linkGuestIfNeeded();
+      const result = await runAuthBootstrap(getAccessToken());
       if (cancelled) return;
 
-      if (link.ok === false && link.reason === "conflict") {
+      if (result.ok === false) {
         setBootstrapError(
-          link.message ||
-            "This account is already linked to a different profile. Please sign in with the correct account."
+          result.message ||
+            (result.reason === "conflict"
+              ? "This account is already linked to a different profile. Please sign in with the correct account."
+              : "Something went wrong while setting up your account.")
         );
-        setBootstrapping(false);
-        return;
-      }
-
-      try {
-        await activatePendingPlanIfNeeded();
-      } catch (e) {
-        if (!cancelled) {
-          setBootstrapError((e as Error).message);
-        }
       }
 
       if (!cancelled) setBootstrapping(false);

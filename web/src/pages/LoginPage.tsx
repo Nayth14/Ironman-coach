@@ -5,7 +5,6 @@ import { AuthFooterLink, AuthLayout } from "../components/AuthLayout";
 import { SocialButtons } from "../components/SocialButtons";
 import { TextInput } from "../components/TextInput";
 import { useAuth } from "../lib/auth";
-import { activatePendingPlanIfNeeded, linkGuestIfNeeded } from "../lib/authLink";
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -17,22 +16,6 @@ export function LoginPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const finishLogin = async () => {
-    const link = await linkGuestIfNeeded();
-    if (link.ok === false && link.reason === "conflict") {
-      setError(link.message || "Account conflict. Try a different login.");
-      return false;
-    }
-    try {
-      await activatePendingPlanIfNeeded();
-    } catch (e) {
-      setError((e as Error).message);
-      return false;
-    }
-    navigate(next, { replace: true });
-    return true;
-  };
-
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setLoading(true);
@@ -43,7 +26,7 @@ export function LoginPage() {
       setLoading(false);
       return;
     }
-    await finishLogin();
+    navigate(next, { replace: true });
     setLoading(false);
   };
 

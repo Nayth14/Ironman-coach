@@ -44,3 +44,39 @@ export async function activatePendingPlanIfNeeded(): Promise<void> {
   await api.activatePlan(planId);
   clearPendingPlanActivation();
 }
+
+export type AuthBootstrapResult =
+  | { ok: true }
+  | { ok: false; reason: "conflict" | "error"; message?: string };
+
+let bootstrapPromise: Promise<AuthBootstrapResult> | null = null;
+let bootstrapCacheKey: string | null = null;
+
+export function resetAuthBootstrap(): void {
+  bootstrapPromise = null;
+  bootstrapCacheKey = null;
+}
+
+/** Link guest + activate pending plan once per auth session (deduped). */
+export async function runAuthBootstrap(accessToken: string | null): Promise<AuthBootstrapResult> {
+  const cacheKey = accessToken ?? "anonymous";
+  if (bootstrapPromise && bootstrapCacheKey === cacheKey) {
+    return bootstrapPromise;
+  }
+
+  bootstrapCacheKey = cacheKey;
+  bootstrapPromise = (async (): Promise<AuthBootstrapResult> => {
+    const link = await linkGuestIfNeeded();
+    if (link.ok === false && link.reason === "conflict") {
+      return { ok: false, reason: "conflict", message: link.message };
+    }
+    try {
+      await activatePendingPlanIfNeeded();
+    } catch (e) {
+      return { ok: false, reason: "error", message: (e as Error).message };
+    }
+    return { ok: true };
+  })();
+
+  return bootstrapPromise;
+}

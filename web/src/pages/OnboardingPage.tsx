@@ -5,11 +5,21 @@ import { ReadinessCard } from "../components/ReadinessCard";
 import { Button } from "../components/Button";
 import { api, streamSSE } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { setPendingPlanActivation, linkGuestIfNeeded } from "../lib/authLink";
+import { setPendingPlanActivation } from "../lib/authLink";
 import { ensureGuestId, setPlanId } from "../lib/guest";
 import type { ChatMessage, PlanGenerateResponse } from "../lib/types";
 import { DAY_NAMES, formatDate } from "../lib/config";
 import { SportIcon } from "../components/SportIcon";
+
+function coachSignalsPlanReady(content: string): boolean {
+  const text = content.trim();
+  if (!text || text.endsWith("?")) return false;
+  if (text.includes("[[READY_TO_BUILD]]")) return true;
+  return /i have all the information i need/i.test(text)
+    || /start building your (?:training )?plan/i.test(text)
+    || /putting (?:your |together )?(?:training )?plan together/i.test(text)
+    || /i(?:'ve| have) got (?:everything|what) i need/i.test(text);
+}
 
 export function OnboardingPage() {
   const navigate = useNavigate();
@@ -73,6 +83,7 @@ export function OnboardingPage() {
           const final: ChatMessage[] = [...next, { role: "assistant", content: d.content }];
           setMessages(final);
           ready = d.ready ?? false;
+          if (!ready && coachSignalsPlanReady(d.content)) ready = true;
           if (ready) await generatePlan(final);
         },
         onError: (d) => setError(d.message),
@@ -106,20 +117,10 @@ export function OnboardingPage() {
     }
   };
 
-  const startWeek1 = async () => {
+  const startWeek1 = () => {
     if (!result) return;
-    if (!session) {
-      setPendingPlanActivation(result.planId);
-      navigate("/signup?next=/dashboard");
-      return;
-    }
-    try {
-      await linkGuestIfNeeded();
-      await api.activatePlan(result.planId);
-      navigate("/dashboard");
-    } catch (e) {
-      setError((e as Error).message);
-    }
+    setPendingPlanActivation(result.planId);
+    navigate(session ? "/dashboard" : "/signup?next=/dashboard");
   };
 
   return (
