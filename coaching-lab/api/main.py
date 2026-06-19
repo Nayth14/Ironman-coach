@@ -234,6 +234,26 @@ def onboarding_chat(body: OnboardingChatRequest, s: Store = Depends(store)):
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
+def _plan_generate_payload(
+    athlete_id: str,
+    profile: AthleteProfile,
+    verdict: ReadinessResult,
+    tp: TrainingPlan,
+    summary: str,
+    s: Store,
+) -> dict[str, Any]:
+    s.upsert_athlete_profile(athlete_id, profile, verdict)
+    plan_id = s.save_plan(athlete_id, tp, summary, status="preview")
+    return {
+        "planId": plan_id,
+        "planStartDate": tp.plan_start_date.isoformat(),
+        "profile": json.loads(profile.model_dump_json()),
+        "readiness": json.loads(verdict.model_dump_json()),
+        "plan": json.loads(tp.model_dump_json()),
+        "summary": summary,
+    }
+
+
 @app.post("/api/plans/generate")
 def generate_plan(
     body: PlanGenerateRequest,
@@ -248,31 +268,36 @@ def generate_plan(
         athlete = s.create_guest(x_guest_id)
 
     messages = [m.model_dump() for m in body.messages]
-    try:
-        profile = extract.extract_profile(messages)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(500, f"Profile extraction failed: {exc}") from exc
 
-    verdict = readiness.assess(profile)
-    tp = plan_builder.generate_plan(profile)
-    summary = _generate_summary(profile, verdict, tp)
+    def stream():
+        try:
+            yield _sse_event("progress", {"message": "Extracting your profile…"})
+            profile = extract.extract_profile(messages)
 
-    s.upsert_athlete_profile(athlete["id"], profile, verdict)
-    plan_id = s.save_plan(athlete["id"], tp, summary, status="preview")
+            yield _sse_event("progress", {"message": "Assessing readiness…"})
+            verdict = readiness.assess(profile)
 
-    conv = s.get_or_create_chat(athlete["id"], "onboarding")
-    s.save_chat_messages(conv["id"], messages)
+            tp: TrainingPlan | None = None
+            for item in plan_builder.iter_generate_plan(profile):
+                if isinstance(item, str):
+                    yield _sse_event("progress", {"message": item})
+                else:
+                    tp = item
+            assert tp is not None
 
-    return {
-        "planId": plan_id,
-        "planStartDate": tp.plan_start_date.isoformat(),
-        "profile": json.loads(profile.model_dump_json()),
-        "readiness": json.loads(verdict.model_dump_json()),
-        "plan": json.loads(tp.model_dump_json()),
-        "summary": summary,
-    }
+            yield _sse_event("progress", {"message": "Writing your plan summary…"})
+            summary = _generate_summary(profile, verdict, tp)
+
+            payload = _plan_generate_payload(athlete["id"], profile, verdict, tp, summary, s)
+            conv = s.get_or_create_chat(athlete["id"], "onboarding")
+            s.save_chat_messages(conv["id"], messages)
+            yield _sse_event("done", payload)
+        except ValueError as exc:
+            yield _sse_event("error", {"message": str(exc)})
+        except Exception as exc:
+            yield _sse_event("error", {"message": f"Plan generation failed: {exc}"})
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 @app.post("/api/plans/{plan_id}/activate")

@@ -20,6 +20,7 @@ export function OnboardingPage() {
   const [input, setInput] = useState("");
   const [streaming, setStreaming] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [planProgress, setPlanProgress] = useState<string | null>(null);
   const [result, setResult] = useState<PlanGenerateResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -51,7 +52,7 @@ export function OnboardingPage() {
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, result]);
+  }, [messages, result, planProgress]);
 
   const sendMessage = async () => {
     if (!input.trim() || streaming) return;
@@ -79,21 +80,29 @@ export function OnboardingPage() {
     } catch (e) {
       setError((e as Error).message);
     } finally {
-      setStreaming(false);
+      if (!ready) setStreaming(false);
     }
   };
 
   const generatePlan = async (msgs: ChatMessage[]) => {
     setGenerating(true);
+    setPlanProgress("Starting your plan…");
     setError(null);
     try {
-      const res = await api.generatePlan(msgs);
-      setResult(res);
-      setPlanId(res.planId);
+      await api.generatePlan(msgs, {
+        onProgress: (d) => setPlanProgress(d.message),
+        onDone: (d) => {
+          setResult(d);
+          setPlanId(d.planId);
+          setPlanProgress(null);
+        },
+        onError: (d) => setError(d.message),
+      });
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setGenerating(false);
+      setStreaming(false);
     }
   };
 
@@ -137,8 +146,18 @@ export function OnboardingPage() {
                   </div>
                 </div>
               ))}
-              {streaming && (
+              {streaming && !generating && (
                 <div className="text-text-muted text-sm animate-pulse">Coach is typing…</div>
+              )}
+              {generating && planProgress && (
+                <div className="flex justify-start">
+                  <div className="max-w-[85%] rounded-2xl px-4 py-3 text-sm bg-gray-50 border border-border">
+                    <div className="flex items-center gap-2 text-text-muted">
+                      <span className="inline-block h-2 w-2 rounded-full bg-primary animate-pulse" />
+                      {planProgress}
+                    </div>
+                  </div>
+                </div>
               )}
               <div ref={bottomRef} />
             </div>
@@ -165,9 +184,12 @@ export function OnboardingPage() {
         )}
 
         <div className="space-y-4">
-          {generating && (
+          {generating && planProgress && (
             <div className="bg-white rounded-2xl border border-border p-8 text-center">
-              <div className="animate-pulse text-text-muted">Building your plan…</div>
+              <div className="flex items-center justify-center gap-2 text-text-muted">
+                <span className="inline-block h-2 w-2 rounded-full bg-primary animate-pulse" />
+                {planProgress}
+              </div>
             </div>
           )}
 
