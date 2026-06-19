@@ -119,6 +119,14 @@ def _sse_event(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _summary_fallback(profile: AthleteProfile, verdict: ReadinessResult, tp: TrainingPlan) -> str:
+    return (
+        f"Your {profile.race_name} plan is ready — {verdict.weeks_to_race} weeks "
+        f"to race with a {verdict.verdict.value} readiness verdict. "
+        f"We've built {len(tp.weeks)} weeks to start."
+    )
+
+
 def _generate_summary(profile: AthleteProfile, verdict: ReadinessResult, tp: TrainingPlan) -> str:
     phase_lines = ", ".join(
         f"{p.name.value} (wk {p.start_week}-{p.end_week})" for p in tp.phases
@@ -137,11 +145,7 @@ def _generate_summary(profile: AthleteProfile, verdict: ReadinessResult, tp: Tra
             model=llm.summary_model(),
         )
     except Exception:
-        return (
-            f"Your {profile.race_name} plan is ready — {verdict.weeks_to_race} weeks "
-            f"to race with a {verdict.verdict.value} readiness verdict. "
-            f"We've built {len(tp.weeks)} weeks to start."
-        )
+        return _summary_fallback(profile, verdict, tp)
 
 
 def _build_coaching_context(s: Store, athlete: dict) -> str:
@@ -257,7 +261,9 @@ def generate_plan(
 
     verdict = readiness.assess(profile)
     tp = plan_builder.generate_plan(profile)
-    summary = _generate_summary(profile, verdict, tp)
+    # Skip the LLM summary here — extraction already calls OpenAI and the combined
+    # request can exceed Netlify/proxy timeouts (~26s).
+    summary = _summary_fallback(profile, verdict, tp)
 
     s.upsert_athlete_profile(athlete["id"], profile, verdict)
     plan_id = s.save_plan(athlete["id"], tp, summary, status="preview")

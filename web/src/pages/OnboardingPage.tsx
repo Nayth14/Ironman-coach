@@ -87,11 +87,17 @@ export function OnboardingPage() {
     setGenerating(true);
     setError(null);
     try {
+      await ensureGuestId();
       const res = await api.generatePlan(msgs);
       setResult(res);
       setPlanId(res.planId);
     } catch (e) {
-      setError((e as Error).message);
+      const msg = (e as Error).message;
+      setError(
+        msg === "Failed to fetch"
+          ? "Plan generation timed out or lost connection. Keep the API running and try sending your last message again."
+          : msg
+      );
     } finally {
       setGenerating(false);
     }
@@ -166,8 +172,9 @@ export function OnboardingPage() {
 
         <div className="space-y-4">
           {generating && (
-            <div className="bg-white rounded-2xl border border-border p-8 text-center">
+            <div className="bg-white rounded-2xl border border-border p-8 text-center space-y-2">
               <div className="animate-pulse text-text-muted">Building your plan…</div>
+              <p className="text-xs text-text-muted">This usually takes about a minute.</p>
             </div>
           )}
 

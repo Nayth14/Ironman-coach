@@ -4,6 +4,8 @@
 
 [build.environment]
   NODE_VERSION = "20"
+  # Call Render directly — Netlify's /api proxy times out before plan generation finishes.
+  VITE_API_URL = "https://nayths-ironman-coach-api.onrender.com"
 
 [[redirects]]
   from = "/api/*"

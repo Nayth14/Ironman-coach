@@ -10,6 +10,9 @@ export default defineConfig({
       "/api": {
         target: "http://127.0.0.1:8000",
         changeOrigin: true,
+        // Plan generation runs LLM extraction and can take 60–90s.
+        timeout: 300_000,
+        proxyTimeout: 300_000,
       },
     },
   },
