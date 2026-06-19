@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
 from datetime import date
 
 from engine import calendar, enrich, periodization, scheduler, strength
@@ -15,20 +16,18 @@ def _week_in_phase_ratio(week_number: int, phase: Phase) -> float:
     return (week_number - phase.start_week) / span
 
 
-def generate_plan(
+def iter_generate_plan(
     profile: AthleteProfile,
     today: date | None = None,
     max_weeks_to_build: int = 4,
     plan_state: "PlanState | None" = None,
-) -> TrainingPlan:
-    """Generate the macrocycle and materialize the first N weeks of workouts.
-
-    Deterministic scheduling sets volume and placement; LLM fills workout steps.
-    """
+) -> Iterator[str | TrainingPlan]:
+    """Generate a plan, yielding progress messages then the final TrainingPlan."""
     ref_today = today or date.today()
     total_weeks = weeks_to_race(profile.race_date, ref_today)
     total_weeks = max(4, total_weeks)
 
+    yield "Scheduling your macrocycle…"
     start = calendar.plan_start_date(ref_today)
     phases = periodization.build_phases(profile, total_weeks)
     state = plan_state or PlanState()
@@ -36,6 +35,7 @@ def generate_plan(
     weeks = []
     build_count = min(max_weeks_to_build, total_weeks)
     for week_number in range(1, build_count + 1):
+        yield f"Building week {week_number} of {build_count}…"
         phase_name = periodization.phase_for_week(phases, week_number)
         phase = next(p for p in phases if p.name == phase_name)
         is_deload = periodization.is_deload_week(week_number, phase_name)
@@ -78,4 +78,22 @@ def generate_plan(
         weeks=weeks,
     )
     assert_plan_valid(plan)
+    yield plan
+
+
+def generate_plan(
+    profile: AthleteProfile,
+    today: date | None = None,
+    max_weeks_to_build: int = 4,
+    plan_state: "PlanState | None" = None,
+) -> TrainingPlan:
+    """Generate the macrocycle and materialize the first N weeks of workouts.
+
+    Deterministic scheduling sets volume and placement; LLM fills workout steps.
+    """
+    plan: TrainingPlan | None = None
+    for item in iter_generate_plan(profile, today, max_weeks_to_build, plan_state):
+        if isinstance(item, TrainingPlan):
+            plan = item
+    assert plan is not None
     return plan
