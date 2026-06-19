@@ -22,7 +22,7 @@ export function DashboardLayout({ raceName, weeksToRace }: Props) {
     <div className="flex min-h-screen">
       <aside className="w-56 bg-white border-r border-border flex flex-col shrink-0">
         <div className="p-5">
-          <Logo />
+          <Logo to="/dashboard" />
         </div>
         <nav className="flex-1 px-3 space-y-1">
           {NAV.map((n) => (
