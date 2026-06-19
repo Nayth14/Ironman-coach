@@ -4,12 +4,9 @@
 
 [build.environment]
   NODE_VERSION = "20"
-
-[[redirects]]
-  from = "/api/*"
-  to = "https://nayths-ironman-coach-api.onrender.com/api/:splat"
-  status = 200
-  force = true
+  # Call the API directly so long-running SSE endpoints (e.g. plan generation)
+  # are not cut off by Netlify's proxy timeout. The backend allows this origin via CORS.
+  VITE_API_URL = "https://nayths-ironman-coach-api.onrender.com"
 
 [[redirects]]
   from = "/*"
