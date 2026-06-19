@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { useAuth } from "../lib/auth";
-import { activatePendingPlanIfNeeded, linkGuestIfNeeded } from "../lib/authLink";
 import { supabase } from "../lib/supabase";
 
 export function AuthCallbackPage() {
@@ -30,20 +29,7 @@ export function AuthCallbackPage() {
     }
 
     const next = params.get("next") || "/dashboard";
-
-    (async () => {
-      const link = await linkGuestIfNeeded();
-      if (link.ok === false && link.reason === "conflict") {
-        setError(link.message || "Account conflict.");
-        return;
-      }
-      try {
-        await activatePendingPlanIfNeeded();
-        navigate(next, { replace: true });
-      } catch (e) {
-        setError((e as Error).message);
-      }
-    })();
+    navigate(next, { replace: true });
   }, [loading, session, navigate, params]);
 
   if (error) {

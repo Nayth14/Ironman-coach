@@ -5,7 +5,6 @@ import { AuthFooterLink, AuthLayout } from "../components/AuthLayout";
 import { SocialButtons } from "../components/SocialButtons";
 import { TextInput } from "../components/TextInput";
 import { useAuth } from "../lib/auth";
-import { activatePendingPlanIfNeeded, linkGuestIfNeeded } from "../lib/authLink";
 
 export function SignUpPage() {
   const navigate = useNavigate();
@@ -34,22 +33,8 @@ export function SignUpPage() {
       return;
     }
 
-    const link = await linkGuestIfNeeded();
-    if (link.ok === false && link.reason === "conflict") {
-      setError(link.message || "Account conflict.");
-      setLoading(false);
-      return;
-    }
-
-    try {
-      await activatePendingPlanIfNeeded();
-      navigate(next, { replace: true });
-    } catch (e) {
-      setInfo("Check your email to confirm your account, then log in.");
-      setError((e as Error).message);
-    } finally {
-      setLoading(false);
-    }
+    navigate(next, { replace: true });
+    setLoading(false);
   };
 
   const onOAuth = async (provider: Provider) => {

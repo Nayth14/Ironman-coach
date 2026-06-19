@@ -14,6 +14,7 @@ import {
   loadDevSession,
   saveDevSession,
 } from "./devAuth";
+import { resetAuthBootstrap } from "./authLink";
 import { isSupabaseConfigured, supabase } from "./supabase";
 
 interface AuthContextValue {
@@ -124,6 +125,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = useCallback(async () => {
+    resetAuthBootstrap();
     if (!isSupabaseConfigured || !supabase) {
       clearDevSession();
       setSession(null);

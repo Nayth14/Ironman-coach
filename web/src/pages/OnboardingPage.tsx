@@ -5,7 +5,7 @@ import { ReadinessCard } from "../components/ReadinessCard";
 import { Button } from "../components/Button";
 import { api, streamSSE } from "../lib/api";
 import { useAuth } from "../lib/auth";
-import { setPendingPlanActivation, linkGuestIfNeeded } from "../lib/authLink";
+import { setPendingPlanActivation } from "../lib/authLink";
 import { ensureGuestId, setPlanId } from "../lib/guest";
 import type { ChatMessage, PlanGenerateResponse } from "../lib/types";
 import { DAY_NAMES, formatDate } from "../lib/config";
@@ -117,20 +117,10 @@ export function OnboardingPage() {
     }
   };
 
-  const startWeek1 = async () => {
+  const startWeek1 = () => {
     if (!result) return;
-    if (!session) {
-      setPendingPlanActivation(result.planId);
-      navigate("/signup?next=/dashboard");
-      return;
-    }
-    try {
-      await linkGuestIfNeeded();
-      await api.activatePlan(result.planId);
-      navigate("/dashboard");
-    } catch (e) {
-      setError((e as Error).message);
-    }
+    setPendingPlanActivation(result.planId);
+    navigate(session ? "/dashboard" : "/signup?next=/dashboard");
   };
 
   return (
