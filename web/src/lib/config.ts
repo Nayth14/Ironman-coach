@@ -1,6 +1,12 @@
 export const BRAND_NAME = import.meta.env.VITE_BRAND_NAME || "Ironman Coach";
 export const API_URL = import.meta.env.VITE_API_URL || "";
 
+/** Resolve an API path, using VITE_API_URL when set (bypasses Netlify's ~26s proxy limit). */
+export function apiPath(path: string): string {
+  const base = API_URL.replace(/\/$/, "");
+  return base ? `${base}${path}` : path;
+}
+
 export const COLORS = {
   bg: "#FAFAF8",
   primary: "#FF5436",

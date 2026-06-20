@@ -1,11 +1,7 @@
+import { apiPath } from "./config";
 import { getGuestId } from "./guest";
-import { API_URL } from "./config";
 
 type FetchMode = "guest" | "auth" | "both";
-
-function apiUrl(path: string): string {
-  return path.startsWith("http") ? path : `${API_URL}${path}`;
-}
 
 let accessTokenGetter: (() => string | null) | null = null;
 
@@ -33,7 +29,7 @@ async function apiFetch<T>(
     if (token) headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(apiUrl(path), { ...options, headers });
+  const res = await fetch(apiPath(path), { ...options, headers });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     const detail = err.detail || res.statusText;
@@ -67,7 +63,7 @@ export async function streamSSE<TDone = { content: string; ready?: boolean }>(
     if (token) headers.Authorization = `Bearer ${token}`;
   }
 
-  const res = await fetch(apiUrl(path), {
+  const res = await fetch(apiPath(path), {
     method: "POST",
     headers,
     body: JSON.stringify(body),

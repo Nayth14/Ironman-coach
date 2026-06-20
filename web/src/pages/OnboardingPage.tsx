@@ -139,6 +139,7 @@ export function OnboardingPage() {
     setPlanProgress("Starting your plan…");
     setError(null);
     try {
+      await ensureGuestId();
       await api.generatePlan(msgs, {
         onProgress: (d) => setPlanProgress(d.message),
         onDone: (d) => {
@@ -149,7 +150,12 @@ export function OnboardingPage() {
         onError: (d) => setError(d.message),
       });
     } catch (e) {
-      setError((e as Error).message);
+      const msg = (e as Error).message;
+      setError(
+        msg === "Failed to fetch"
+          ? "Plan generation timed out or lost connection. Keep the API running and try sending your last message again."
+          : msg
+      );
     } finally {
       setGenerating(false);
       setStreaming(false);

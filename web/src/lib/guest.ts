@@ -1,4 +1,4 @@
-import { API_URL } from "./config";
+import { apiPath } from "./config";
 
 const GUEST_KEY = "ironman_coach_guest_id";
 const PLAN_KEY = "ironman_coach_plan_id";
@@ -22,7 +22,11 @@ export function setPlanId(id: string): void {
 export async function ensureGuestId(): Promise<string> {
   let id = getGuestId();
   if (id) return id;
-  const res = await fetch(`${API_URL}/api/guests`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+  const res = await fetch(apiPath("/api/guests"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: "{}",
+  });
   if (!res.ok) throw new Error("Failed to create guest");
   const data = (await res.json()) as { guestId: string };
   id = data.guestId;
