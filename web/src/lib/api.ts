@@ -38,16 +38,17 @@ async function apiFetch<T>(
   return res.json();
 }
 
-export interface SSEHandlers {
+export interface SSEHandlers<TDone = { content: string; ready?: boolean }> {
   onToken?: (data: { content: string; full: string }) => void;
-  onDone?: (data: { content: string; ready?: boolean }) => void;
+  onProgress?: (data: { message: string }) => void;
+  onDone?: (data: TDone) => void | Promise<void>;
   onError?: (data: { message: string }) => void;
 }
 
-export async function streamSSE(
+export async function streamSSE<TDone = { content: string; ready?: boolean }>(
   path: string,
   body: unknown,
-  handlers: SSEHandlers,
+  handlers: SSEHandlers<TDone>,
   mode: FetchMode = "guest"
 ): Promise<void> {
   const headers: Record<string, string> = { "Content-Type": "application/json" };
@@ -67,7 +68,17 @@ export async function streamSSE(
     headers,
     body: JSON.stringify(body),
   });
-  if (!res.ok || !res.body) throw new Error("Stream failed");
+  if (!res.ok || !res.body) {
+    let detail = "";
+    try {
+      const data = await res.json();
+      detail = typeof data?.detail === "string" ? data.detail : "";
+    } catch {
+      detail = res.statusText;
+    }
+    const suffix = detail ? `: ${detail}` : "";
+    throw new Error(`Request failed (${res.status})${suffix}`);
+  }
 
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
@@ -90,8 +101,12 @@ export async function streamSSE(
       if (!data) continue;
       const parsed = JSON.parse(data);
       if (event === "token") handlers.onToken?.(parsed);
-      else if (event === "done") handlers.onDone?.(parsed);
-      else if (event === "error") handlers.onError?.(parsed);
+      else if (event === "progress") handlers.onProgress?.(parsed);
+      else if (event === "done") await handlers.onDone?.(parsed);
+      else if (event === "error") {
+        handlers.onError?.(parsed);
+        throw new Error(parsed.message);
+      }
     }
   }
 }
@@ -107,13 +122,14 @@ export const api = {
       "both"
     ),
 
-  generatePlan: (messages: { role: string; content: string }[]) =>
-    apiFetch<import("./types").PlanGenerateResponse>(
+  generatePlan: (
+    messages: { role: string; content: string }[],
+    handlers: SSEHandlers<import("./types").PlanGenerateResponse> = {}
+  ) =>
+    streamSSE<import("./types").PlanGenerateResponse>(
       "/api/plans/generate",
-      {
-        method: "POST",
-        body: JSON.stringify({ messages }),
-      },
+      { messages },
+      handlers,
       "guest"
     ),
 

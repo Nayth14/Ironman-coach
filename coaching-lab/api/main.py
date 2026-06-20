@@ -119,6 +119,18 @@ def _sse_event(event: str, data: Any) -> str:
     return f"event: {event}\ndata: {json.dumps(data)}\n\n"
 
 
+def _sse_response(stream_gen) -> StreamingResponse:
+    return StreamingResponse(
+        stream_gen(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 def _summary_fallback(profile: AthleteProfile, verdict: ReadinessResult, tp: TrainingPlan) -> str:
     return (
         f"Your {profile.race_name} plan is ready — {verdict.weeks_to_race} weeks "
@@ -235,7 +247,27 @@ def onboarding_chat(body: OnboardingChatRequest, s: Store = Depends(store)):
         except Exception as exc:
             yield _sse_event("error", {"message": str(exc)})
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return _sse_response(stream)
+
+
+def _plan_generate_payload(
+    athlete_id: str,
+    profile: AthleteProfile,
+    verdict: ReadinessResult,
+    tp: TrainingPlan,
+    summary: str,
+    s: Store,
+) -> dict[str, Any]:
+    s.upsert_athlete_profile(athlete_id, profile, verdict)
+    plan_id = s.save_plan(athlete_id, tp, summary, status="preview")
+    return {
+        "planId": plan_id,
+        "planStartDate": tp.plan_start_date.isoformat(),
+        "profile": json.loads(profile.model_dump_json()),
+        "readiness": json.loads(verdict.model_dump_json()),
+        "plan": json.loads(tp.model_dump_json()),
+        "summary": summary,
+    }
 
 
 @app.post("/api/plans/generate")
@@ -252,33 +284,36 @@ def generate_plan(
         athlete = s.create_guest(x_guest_id)
 
     messages = [m.model_dump() for m in body.messages]
-    try:
-        profile = extract.extract_profile(messages)
-    except ValueError as exc:
-        raise HTTPException(400, str(exc)) from exc
-    except Exception as exc:
-        raise HTTPException(500, f"Profile extraction failed: {exc}") from exc
 
-    verdict = readiness.assess(profile)
-    tp = plan_builder.generate_plan(profile)
-    # Skip the LLM summary here — extraction already calls OpenAI and the combined
-    # request can exceed Netlify/proxy timeouts (~26s).
-    summary = _summary_fallback(profile, verdict, tp)
+    def stream():
+        try:
+            yield _sse_event("progress", {"message": "Extracting your profile…"})
+            profile = extract.extract_profile(messages)
 
-    s.upsert_athlete_profile(athlete["id"], profile, verdict)
-    plan_id = s.save_plan(athlete["id"], tp, summary, status="preview")
+            yield _sse_event("progress", {"message": "Assessing readiness…"})
+            verdict = readiness.assess(profile)
 
-    conv = s.get_or_create_chat(athlete["id"], "onboarding")
-    s.save_chat_messages(conv["id"], messages)
+            tp: TrainingPlan | None = None
+            for item in plan_builder.iter_generate_plan(profile):
+                if isinstance(item, str):
+                    yield _sse_event("progress", {"message": item})
+                else:
+                    tp = item
+            assert tp is not None
 
-    return {
-        "planId": plan_id,
-        "planStartDate": tp.plan_start_date.isoformat(),
-        "profile": json.loads(profile.model_dump_json()),
-        "readiness": json.loads(verdict.model_dump_json()),
-        "plan": json.loads(tp.model_dump_json()),
-        "summary": summary,
-    }
+            yield _sse_event("progress", {"message": "Finalizing your plan…"})
+            summary = _summary_fallback(profile, verdict, tp)
+
+            payload = _plan_generate_payload(athlete["id"], profile, verdict, tp, summary, s)
+            conv = s.get_or_create_chat(athlete["id"], "onboarding")
+            s.save_chat_messages(conv["id"], messages)
+            yield _sse_event("done", payload)
+        except ValueError as exc:
+            yield _sse_event("error", {"message": str(exc)})
+        except Exception as exc:
+            yield _sse_event("error", {"message": f"Plan generation failed: {exc}"})
+
+    return _sse_response(stream)
 
 
 @app.post("/api/plans/{plan_id}/activate")
@@ -385,7 +420,7 @@ def weekly_checkin_chat(
     conv = s.get_or_create_chat(athlete["id"], "weekly_checkin")
     s.save_chat_messages(conv["id"], messages)
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return _sse_response(stream)
 
 
 @app.post("/api/adaptations/weekly-context/extract")
@@ -640,7 +675,7 @@ def coaching_chat(
         except Exception as exc:
             yield _sse_event("error", {"message": str(exc)})
 
-    return StreamingResponse(stream(), media_type="text/event-stream")
+    return _sse_response(stream)
 
 
 @app.get("/api/fixtures")

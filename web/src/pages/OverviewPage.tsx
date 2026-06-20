@@ -8,22 +8,30 @@ import { CoachChatFab, CoachChatPanel } from "../components/CoachChat";
 import { AdaptationBanner } from "../components/AdaptationBanner";
 import { WeeklyCheckinPanel } from "../components/WeeklyCheckinPanel";
 import { api } from "../lib/api";
+import { useAuth } from "../lib/auth";
 import { ensureGuestId } from "../lib/guest";
 import { formatDuration } from "../lib/config";
 import type { Workout, Phase, AdaptationEvent } from "../lib/types";
 
 export function OverviewPage() {
+  const { session } = useAuth();
   const [sportFilter, setSportFilter] = useState<SportFilter>("all");
   const [chatOpen, setChatOpen] = useState(false);
   const [adaptation, setAdaptation] = useState<AdaptationEvent | null>(null);
   const qc = useQueryClient();
 
   useEffect(() => {
-    ensureGuestId();
+    if (!session) {
+      ensureGuestId();
+    }
+  }, [session]);
+
+  useEffect(() => {
+    if (!session) return;
     api.getPendingAdaptation().then((r) => {
       if (r.adaptation) setAdaptation(r.adaptation);
     });
-  }, []);
+  }, [session]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ["currentPlan"],

@@ -6,6 +6,7 @@ The LLM converses and extracts; deterministic rules act on the result.
 from __future__ import annotations
 
 import json
+import re
 
 from engine import llm
 from engine.models import AthleteProfile
@@ -13,10 +14,23 @@ from engine.prompts import EXTRACTION_SYSTEM
 
 READY_TOKEN = "[[READY_TO_BUILD]]"
 
+# Fallback when the coach signals completion in natural language but omits the token.
+_READY_PHRASES = (
+    re.compile(r"i have all the information i need", re.I),
+    re.compile(r"start building your (?:training )?plan", re.I),
+    re.compile(r"putting (?:your |together )?(?:training )?plan together", re.I),
+    re.compile(r"i(?:'ve| have) got (?:everything|what) i need", re.I),
+)
+
 
 def conversation_is_ready(assistant_message: str) -> bool:
     """True when the onboarding coach signals it has enough info."""
-    return READY_TOKEN in assistant_message
+    if READY_TOKEN in assistant_message:
+        return True
+    text = assistant_message.strip()
+    if not text or text.endswith("?"):
+        return False
+    return any(pattern.search(text) for pattern in _READY_PHRASES)
 
 
 def strip_ready_token(text: str) -> str:
