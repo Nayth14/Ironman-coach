@@ -126,6 +126,8 @@ def is_demanding_session(workout: Workout) -> bool:
 def is_long_ride(workout: Workout) -> bool:
     if workout.sport != Sport.BIKE:
         return False
+    if workout.bank_workout_id and workout.bank_workout_id.startswith("LR"):
+        return True
     if workout.is_key_session and "long" in workout.title.lower():
         return True
     return duration_seconds(workout) >= LONG_RIDE_MIN_SECONDS
@@ -134,6 +136,8 @@ def is_long_ride(workout: Workout) -> bool:
 def is_long_run(workout: Workout) -> bool:
     if workout.sport != Sport.RUN:
         return False
+    if workout.bank_workout_id and workout.bank_workout_id.startswith("LR"):
+        return True
     if workout.is_key_session and "long" in workout.title.lower():
         return True
     return duration_seconds(workout) >= LONG_RUN_MIN_SECONDS

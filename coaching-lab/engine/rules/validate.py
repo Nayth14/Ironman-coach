@@ -350,19 +350,18 @@ def validate_week(week: PlannedWeek, ctx: RuleContext | None = None) -> list[Rul
             )
 
     # --- Three demanding days in a row — SCH-013 ---
-    for start in range(7):
-        streak = 0
-        for offset in range(7):
-            day = (start + offset) % 7
-            if any(sem.is_demanding_session(w) for w in by_day[day]):
-                streak += 1
-                if streak >= 3:
-                    violations.append(
-                        _violation("SCH-013", f"Three demanding days in a row ending day {day}.")
-                    )
-                    break
-            else:
-                streak = 0
+    demanding_by_day = [any(sem.is_demanding_session(w) for w in by_day[d]) for d in range(7)]
+    sch_013_end_days: set[int] = set()
+    for day in range(7):
+        a = demanding_by_day[(day - 2) % 7]
+        b = demanding_by_day[(day - 1) % 7]
+        c = demanding_by_day[day]
+        if a and b and c:
+            sch_013_end_days.add(day)
+    for day in sorted(sch_013_end_days):
+        violations.append(
+            _violation("SCH-013", f"Three demanding days in a row ending day {day}.")
+        )
 
     # --- One quality per discipline — SCH-015 ---
     if week.phase in (PhaseName.BUILD, PhaseName.PEAK):
