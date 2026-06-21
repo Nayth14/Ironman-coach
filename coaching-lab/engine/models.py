@@ -229,6 +229,7 @@ class Workout(BaseModel):
     estimated_duration_seconds: Optional[int] = None
     estimated_distance_meters: Optional[float] = None
     estimated_tss: Optional[float] = None
+    bank_workout_id: Optional[str] = None
     fueling_notes: Optional[str] = None
     status: WorkoutStatus = WorkoutStatus.PLANNED
 
@@ -311,6 +312,7 @@ class PlanState(BaseModel):
     weeks_since_recovery: int = 0
     progression_frozen_weeks: int = 0
     decision_history: list[str] = Field(default_factory=list)
+    used_bank_ids: list[str] = Field(default_factory=list)
     illness_reentry: bool = False
 
 

@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS workouts (
   estimated_duration_seconds INTEGER,
   estimated_distance_meters REAL,
   estimated_tss REAL,
+  bank_workout_id TEXT,
   fueling_notes TEXT,
   status TEXT NOT NULL DEFAULT 'planned',
   created_at TEXT NOT NULL

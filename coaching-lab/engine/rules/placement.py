@@ -238,18 +238,34 @@ def schedule_week(
         if d not in anchor_days
         and sem.calendar_day_gap(d, long_ride_day) >= sem.MIN_DAYS_HARD_BIKE_BEFORE_LONG_RIDE
     ]
-    if hard_bike_candidates and phase in (PhaseName.BUILD, PhaseName.PEAK) and not is_deload:
+    if (
+        hard_bike_candidates
+        and phase in (PhaseName.BASE, PhaseName.BUILD, PhaseName.PEAK)
+    ):
         hard_bike_day = _pick_day([1, 2, 3], hard_bike_candidates, hard_bike_candidates[0])
-        workouts.append(
-            _workout(
-                Sport.BIKE,
-                hard_bike_day,
-                min(1.25, bike_h * 0.22),
-                PurposeTag.THRESHOLD,
-                True,
-                "Bike threshold",
+        if is_deload:
+            workouts.append(
+                _workout(
+                    Sport.BIKE,
+                    hard_bike_day,
+                    min(1.0, bike_h * 0.16),
+                    PurposeTag.AEROBIC_BASE,
+                    False,
+                    "Easy spin",
+                )
             )
-        )
+        else:
+            hard_bike_title = "Bike sweet spot" if phase == PhaseName.BASE else "Bike threshold"
+            workouts.append(
+                _workout(
+                    Sport.BIKE,
+                    hard_bike_day,
+                    min(1.25, bike_h * 0.22),
+                    PurposeTag.THRESHOLD,
+                    True,
+                    hard_bike_title,
+                )
+            )
         anchor_days.add(hard_bike_day)
 
     # Key run quality — SCH-002: ≥2 days after long ride
@@ -264,18 +280,34 @@ def schedule_week(
             and d != long_run_day
             and d not in (0, 1)  # SCH-007: protect Mon–Tue after weekend
         ]
-        if key_run_candidates and phase in (PhaseName.BUILD, PhaseName.PEAK) and not is_deload:
-            key_run_day = _pick_day([3, 4], key_run_candidates, key_run_candidates[0])
-            workouts.append(
-                _workout(
-                    Sport.RUN,
-                    key_run_day,
-                    min(0.75, run_h * 0.2),
-                    PurposeTag.THRESHOLD,
-                    True,
-                    "Run threshold",
+        # SCH-013: tempo/threshold run should not sit immediately after the long run.
+        day_after_long_run = (long_run_day + 1) % 7
+        key_run_candidates = [d for d in key_run_candidates if d != day_after_long_run]
+        if key_run_candidates and phase in (PhaseName.BASE, PhaseName.BUILD, PhaseName.PEAK):
+            key_run_day = _pick_day([4, 3], key_run_candidates, key_run_candidates[0])
+            if is_deload:
+                workouts.append(
+                    _workout(
+                        Sport.RUN,
+                        key_run_day,
+                        min(0.5, run_h * 0.12),
+                        PurposeTag.AEROBIC_BASE,
+                        False,
+                        "Recovery jog",
+                    )
                 )
-            )
+            else:
+                key_run_title = "Run tempo" if phase == PhaseName.BASE else "Run threshold"
+                workouts.append(
+                    _workout(
+                        Sport.RUN,
+                        key_run_day,
+                        min(0.75, run_h * 0.2),
+                        PurposeTag.THRESHOLD,
+                        True,
+                        key_run_title,
+                    )
+                )
             anchor_days.add(key_run_day)
 
     training_days = [d for d in available if d != rest_day]

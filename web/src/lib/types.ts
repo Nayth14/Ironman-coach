@@ -56,6 +56,7 @@ export interface Workout {
   estimated_duration_seconds?: number | null;
   estimated_distance_meters?: number | null;
   estimated_tss?: number | null;
+  bank_workout_id?: string | null;
   fueling_notes?: string | null;
   status: string;
   week_number?: number;

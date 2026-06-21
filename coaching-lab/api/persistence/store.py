@@ -84,6 +84,12 @@ class Store:
             conn.execute(
                 "ALTER TABLE training_plans ADD COLUMN plan_state TEXT NOT NULL DEFAULT '{}'"
             )
+        workout_cols = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(workouts)").fetchall()
+        }
+        if "bank_workout_id" not in workout_cols:
+            conn.execute("ALTER TABLE workouts ADD COLUMN bank_workout_id TEXT")
 
         ae_cols = {
             row[1]
@@ -452,9 +458,9 @@ class Store:
                     """INSERT INTO workouts
                     (id, plan_id, athlete_id, week_number, phase, sport, title, description,
                      scheduled_date, day_of_week, purpose_tag, is_key_session, steps, exercises,
-                     estimated_duration_seconds, estimated_distance_meters, estimated_tss,
+                     estimated_duration_seconds, estimated_distance_meters, estimated_tss, bank_workout_id,
                      fueling_notes, status, created_at)
-                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                     (
                         wid,
                         plan_id,
@@ -473,6 +479,7 @@ class Store:
                         w.estimated_duration_seconds,
                         w.estimated_distance_meters,
                         w.estimated_tss,
+                        w.bank_workout_id,
                         w.fueling_notes,
                         w.status.value,
                         _utcnow(),
@@ -758,6 +765,7 @@ class Store:
                 estimated_duration_seconds=w.get("estimated_duration_seconds"),
                 estimated_distance_meters=w.get("estimated_distance_meters"),
                 estimated_tss=w.get("estimated_tss"),
+                bank_workout_id=w.get("bank_workout_id"),
                 fueling_notes=w.get("fueling_notes"),
                 status=WorkoutStatus(w.get("status", "planned")),
             )
@@ -967,7 +975,7 @@ class Store:
                 for w in week.workouts:
                     conn.execute(
                         """UPDATE workouts SET title=?, sport=?, purpose_tag=?,
-                        is_key_session=?, estimated_duration_seconds=?, fueling_notes=?, status=?
+                        is_key_session=?, estimated_duration_seconds=?, bank_workout_id=?, fueling_notes=?, status=?
                         WHERE id=?""",
                         (
                             w.title,
@@ -975,6 +983,7 @@ class Store:
                             w.purpose_tag.value,
                             int(w.is_key_session),
                             w.estimated_duration_seconds,
+                            w.bank_workout_id,
                             w.fueling_notes,
                             w.status.value,
                             w.id,

@@ -13,6 +13,7 @@ You receive workout skeletons that already define sport, title, purpose, duratio
 7. Use nested `repeat` steps only when clearly useful (e.g. intervals).
 8. Assign unique string `id` values to every step (e.g. "s1", "s2").
 9. **`notes` is a field on a step, not a step type.** Never set `"type": "notes"`. Put coaching text in the `notes` property on a warmup, work, or cooldown step.
+10. If a workout includes `bank_workout_id` and a `bank_workout` payload, treat that bank template as authoritative. Preserve the workout intent and main-set structure from the bank instead of inventing a different session.
 
 ## Purpose tag guidance
 

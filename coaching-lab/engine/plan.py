@@ -9,6 +9,7 @@ from engine import calendar, enrich, periodization, scheduler, strength
 from engine.models import AthleteProfile, Phase, PlanState, TrainingPlan
 from engine.readiness import weeks_to_race
 from engine.rules.validate import assert_plan_valid
+from engine.workout_bank.assign import assign_bank_workouts
 
 
 def _week_in_phase_ratio(week_number: int, phase: Phase) -> float:
@@ -64,6 +65,7 @@ def iter_generate_plan(
                     w.estimated_duration_seconds = int(
                         w.estimated_duration_seconds * state.run_volume_cap
                     )
+        week = assign_bank_workouts(week, phase=phase_name, state=state)
         calendar.assign_dates(week, start)
         week = enrich.enrich_week_steps(week, profile, phase_name)
         week.strength_plan = strength_plan

@@ -21,6 +21,8 @@ from engine.models import (
     WorkoutTarget,
 )
 from engine.prompts import WORKOUT_STEPS_SYSTEM
+from engine.workout_bank.expand import expand_bank_workout_steps
+from engine.workout_bank.load import get_bank_workout
 
 _DURATION_TOLERANCE = 0.15
 
@@ -300,7 +302,19 @@ def _build_week_payload(
             "is_key_session": w.is_key_session,
             "estimated_duration_seconds": w.estimated_duration_seconds,
             "fueling_notes": w.fueling_notes,
+            "bank_workout_id": w.bank_workout_id,
         }
+        if w.bank_workout_id:
+            bw = get_bank_workout(w.bank_workout_id)
+            if bw:
+                entry["bank_workout"] = {
+                    "id": bw.id,
+                    "family": bw.family,
+                    "main_set": bw.main_set,
+                    "intensity_hint": bw.intensity_hint,
+                    "warmup_minutes": bw.warmup_minutes,
+                    "cooldown_minutes": bw.cooldown_minutes,
+                }
         if w.exercises:
             entry["exercises"] = [
                 {"name": e.name, "sets": e.sets, "reps": e.reps} for e in w.exercises
@@ -413,6 +427,7 @@ def enrich_week_steps(
             or not _duration_valid(workout.steps, workout.estimated_duration_seconds)
         )
         if needs_fallback:
-            workout.steps = template_steps_for_workout(workout)
+            bank_steps = expand_bank_workout_steps(workout)
+            workout.steps = bank_steps or template_steps_for_workout(workout)
 
     return week

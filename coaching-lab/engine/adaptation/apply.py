@@ -49,6 +49,7 @@ def _strip_intensity(w: Workout) -> Workout:
     if out.purpose_tag in (PurposeTag.THRESHOLD, PurposeTag.VO2, PurposeTag.RACE_EXECUTION):
         out.purpose_tag = PurposeTag.AEROBIC_BASE
         out.is_key_session = False
+        out.bank_workout_id = None
     out.status = WorkoutStatus.ADAPTED
     return out
 
