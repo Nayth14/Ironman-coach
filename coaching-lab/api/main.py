@@ -32,6 +32,7 @@ from engine.prompts import COACHING_SYSTEM, ONBOARDING_SYSTEM, SUMMARY_SYSTEM, W
 
 from api.deps import require_auth, require_auth_athlete, require_guest, store
 from api.persistence.store import Store, get_store
+from api.serializers import serialize_model
 
 load_dotenv()
 
@@ -133,6 +134,41 @@ def _sse_response(stream_gen) -> StreamingResponse:
             "X-Accel-Buffering": "no",
         },
     )
+
+
+def _sse_chat_stream(
+    system: str,
+    messages: list[dict],
+    *,
+    strip_fn: Any | None = None,
+    ready_fn: Any | None = None,
+) -> StreamingResponse:
+    """Build an SSE response for a streamed LLM chat.
+
+    Parameters
+    ----------
+    strip_fn:
+        Optional callable(text) -> text used to remove ready tokens from visible output.
+    ready_fn:
+        Optional callable(text) -> bool used to check if the conversation is ready.
+    """
+    def stream():
+        full = ""
+        try:
+            for delta in llm.stream_chat(system, messages):
+                full += delta
+                visible = strip_fn(full) if strip_fn else full
+                yield _sse_event("token", {"content": delta, "full": visible})
+            clean = strip_fn(full) if strip_fn else full
+            done_payload: dict[str, Any] = {"content": clean}
+            if ready_fn is not None:
+                done_payload["ready"] = ready_fn(full)
+            yield _sse_event("done", done_payload)
+        except Exception:
+            logger.exception("Chat stream error")
+            yield _sse_event("error", {"message": "An internal error occurred"})
+
+    return _sse_response(stream)
 
 
 def _summary_fallback(profile: AthleteProfile, verdict: ReadinessResult, tp: TrainingPlan) -> str:
@@ -238,21 +274,12 @@ def link_guest(
 @app.post("/api/chat/onboarding")
 def onboarding_chat(body: OnboardingChatRequest, s: Store = Depends(store)):
     messages = [m.model_dump() for m in body.messages]
-
-    def stream():
-        full = ""
-        try:
-            for delta in llm.stream_chat(ONBOARDING_SYSTEM, messages):
-                full += delta
-                visible = extract.strip_ready_token(full)
-                yield _sse_event("token", {"content": delta, "full": visible})
-            clean = extract.strip_ready_token(full)
-            yield _sse_event("done", {"content": clean, "ready": extract.conversation_is_ready(full)})
-        except Exception:
-            logger.exception("Onboarding chat error")
-            yield _sse_event("error", {"message": "An internal error occurred"})
-
-    return _sse_response(stream)
+    return _sse_chat_stream(
+        ONBOARDING_SYSTEM,
+        messages,
+        strip_fn=extract.strip_ready_token,
+        ready_fn=extract.conversation_is_ready,
+    )
 
 
 def _plan_generate_payload(
@@ -268,9 +295,9 @@ def _plan_generate_payload(
     return {
         "planId": plan_id,
         "planStartDate": tp.plan_start_date.isoformat(),
-        "profile": json.loads(profile.model_dump_json()),
-        "readiness": json.loads(verdict.model_dump_json()),
-        "plan": json.loads(tp.model_dump_json()),
+        "profile": serialize_model(profile),
+        "readiness": serialize_model(verdict),
+        "plan": serialize_model(tp),
         "summary": summary,
     }
 
@@ -346,8 +373,8 @@ def current_plan(auth: tuple[str, dict] = Depends(require_auth_athlete), s: Stor
         "plan": plan_row,
         "planStartDate": plan_row.get("plan_start_date"),
         "workouts": workouts,
-        "profile": json.loads(profile.model_dump_json()) if profile else None,
-        "readiness": json.loads(readiness_data.model_dump_json()) if readiness_data else None,
+        "profile": serialize_model(profile) if profile else None,
+        "readiness": serialize_model(readiness_data) if readiness_data else None,
     }
 
 
@@ -408,26 +435,15 @@ def weekly_checkin_chat(
     _, athlete = auth
     messages = [m.model_dump() for m in body.messages]
 
-    def stream():
-        full = ""
-        try:
-            for delta in llm.stream_chat(WEEKLY_CHECKIN_SYSTEM, messages):
-                full += delta
-                visible = weekly_ctx.strip_ready_token(full)
-                yield _sse_event("token", {"content": delta, "full": visible})
-            clean = weekly_ctx.strip_ready_token(full)
-            yield _sse_event(
-                "done",
-                {"content": clean, "ready": weekly_ctx.conversation_is_ready(full)},
-            )
-        except Exception:
-            logger.exception("Weekly check-in chat error")
-            yield _sse_event("error", {"message": "An internal error occurred"})
-
     conv = s.get_or_create_chat(athlete["id"], "weekly_checkin")
     s.save_chat_messages(conv["id"], messages)
 
-    return _sse_response(stream)
+    return _sse_chat_stream(
+        WEEKLY_CHECKIN_SYSTEM,
+        messages,
+        strip_fn=weekly_ctx.strip_ready_token,
+        ready_fn=weekly_ctx.conversation_is_ready,
+    )
 
 
 @app.post("/api/adaptations/weekly-context/extract")
@@ -462,7 +478,7 @@ def extract_weekly_context_endpoint(
 
     return {
         "checkinId": checkin_id,
-        "context": json.loads(context.model_dump_json()),
+        "context": serialize_model(context),
     }
 
 
@@ -716,9 +732,9 @@ def build_from_fixture(
         "fixture": fixture_name,
         "planId": plan_id,
         "planStartDate": tp.plan_start_date.isoformat(),
-        "profile": json.loads(profile.model_dump_json()),
-        "readiness": json.loads(verdict.model_dump_json()),
-        "plan": json.loads(tp.model_dump_json()),
+        "profile": serialize_model(profile),
+        "readiness": serialize_model(verdict),
+        "plan": serialize_model(tp),
         "summary": summary,
     }
 
@@ -730,6 +746,6 @@ def get_me(auth: tuple[str, dict] = Depends(require_auth_athlete), s: Store = De
     readiness_data = s.readiness_from_row(athlete)
     return {
         "athlete": athlete,
-        "profile": json.loads(profile.model_dump_json()) if profile else None,
-        "readiness": json.loads(readiness_data.model_dump_json()) if readiness_data else None,
+        "profile": serialize_model(profile) if profile else None,
+        "readiness": serialize_model(readiness_data) if readiness_data else None,
     }

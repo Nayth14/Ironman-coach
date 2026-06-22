@@ -32,9 +32,11 @@ def _is_production() -> bool:
     env = os.environ.get("ENV", os.environ.get("ENVIRONMENT", "")).lower()
     if env in ("production", "prod", "staging"):
         return True
-    # Render and similar PaaS set RENDER=true; Supabase URL presence is
-    # another strong signal that this is not a pure local-dev setup.
     if os.environ.get("RENDER") or os.environ.get("FLY_APP_NAME"):
+        return True
+    # A configured Supabase URL signals a non-local deployment even on
+    # custom hosts that don't set the PaaS-specific vars above.
+    if os.environ.get("SUPABASE_URL"):
         return True
     return False
 

@@ -6,6 +6,11 @@ import json
 import os
 
 from engine import llm
+from engine.conversation import (
+    conversation_is_ready as _convo_ready,
+    format_conversation,
+    strip_token,
+)
 from engine.models import WeeklyContext
 from engine.prompts import WEEKLY_CONTEXT_EXTRACTION_SYSTEM
 
@@ -17,19 +22,11 @@ def llm_available() -> bool:
 
 
 def conversation_is_ready(assistant_message: str) -> bool:
-    return READY_TOKEN in assistant_message
+    return _convo_ready(assistant_message, READY_TOKEN)
 
 
 def strip_ready_token(text: str) -> str:
-    return text.replace(READY_TOKEN, "").strip()
-
-
-def _format_conversation(messages: list[dict]) -> str:
-    lines = []
-    for m in messages:
-        role = "Athlete" if m["role"] == "user" else "Coach"
-        lines.append(f"{role}: {m['content']}")
-    return "\n".join(lines)
+    return strip_token(text, READY_TOKEN)
 
 
 def _weekly_context_schema() -> dict:
@@ -57,7 +54,7 @@ def extract_weekly_context(
     week_number: int | None = None,
 ) -> WeeklyContext:
     """Call the LLM to extract playbook-bounded weekly context from chat."""
-    conversation = _format_conversation(messages)
+    conversation = format_conversation(messages)
     week_hint = f"\nReviewed plan week: {week_number}" if week_number else ""
     raw = llm.complete_json(
         system=WEEKLY_CONTEXT_EXTRACTION_SYSTEM,

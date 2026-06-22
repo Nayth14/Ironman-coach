@@ -11,6 +11,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { ensureGuestId } from "../lib/guest";
 import { formatDuration } from "../lib/config";
+import { invalidateTrainingQueries } from "../lib/queryHelpers";
 import type { Workout, Phase, AdaptationEvent } from "../lib/types";
 
 export function OverviewPage() {
@@ -81,8 +82,7 @@ export function OverviewPage() {
   const handleComplete = useCallback(
     async (w: Workout) => {
       await api.completeWorkout(w.id, { completed: true, rpe: 5 });
-      qc.invalidateQueries({ queryKey: ["currentPlan"] });
-      qc.invalidateQueries({ queryKey: ["workouts"] });
+      invalidateTrainingQueries(qc);
     },
     [qc]
   );
@@ -91,8 +91,7 @@ export function OverviewPage() {
     const id = adaptation?.eventId || adaptation?.id;
     if (id) await api.acceptAdaptation(id, true);
     setAdaptation(null);
-    qc.invalidateQueries({ queryKey: ["currentPlan"] });
-    qc.invalidateQueries({ queryKey: ["workouts"] });
+    invalidateTrainingQueries(qc);
   };
 
   const handleAdaptDismiss = async () => {
