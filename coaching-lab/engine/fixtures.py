@@ -20,7 +20,11 @@ def list_fixtures() -> list[str]:
 
 
 def load_fixture(stem: str) -> tuple[str, AthleteProfile]:
-    path = _FIXTURE_DIR / f"{stem}.yaml"
+    if not stem or "/" in stem or "\\" in stem or stem.startswith("."):
+        raise ValueError(f"Invalid fixture name: {stem!r}")
+    path = (_FIXTURE_DIR / f"{stem}.yaml").resolve()
+    if not path.is_relative_to(_FIXTURE_DIR):
+        raise ValueError(f"Invalid fixture name: {stem!r}")
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     name = data.get("name", stem)
     profile = AthleteProfile.model_validate(data["profile"])

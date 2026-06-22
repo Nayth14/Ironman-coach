@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import os
 
 import jwt
 from fastapi import Depends, Header, HTTPException
 
 from api.persistence.store import Store, get_store
+
+logger = logging.getLogger("ironman_coach.auth")
 
 
 def store() -> Store:
@@ -24,9 +27,37 @@ def _extract_bearer(authorization: str | None) -> str | None:
     return token or None
 
 
+def _is_production() -> bool:
+    """Return True when running in a production-like environment."""
+    env = os.environ.get("ENV", os.environ.get("ENVIRONMENT", "")).lower()
+    if env in ("production", "prod", "staging"):
+        return True
+    if os.environ.get("RENDER") or os.environ.get("FLY_APP_NAME"):
+        return True
+    # A configured Supabase URL signals a non-local deployment even on
+    # custom hosts that don't set the PaaS-specific vars above.
+    if os.environ.get("SUPABASE_URL"):
+        return True
+    return False
+
+
 def verify_access_token(token: str) -> str:
     """Verify JWT and return auth user id (sub claim)."""
     secret = os.environ.get("SUPABASE_JWT_SECRET")
+    if not secret:
+        if _is_production():
+            logger.error(
+                "SUPABASE_JWT_SECRET is not set in a production environment — "
+                "rejecting all authenticated requests."
+            )
+            raise HTTPException(
+                status_code=500,
+                detail="Server authentication is misconfigured",
+            )
+        logger.warning(
+            "SUPABASE_JWT_SECRET is not set — accepting unverified dev tokens. "
+            "Do NOT use this in production."
+        )
     try:
         if secret:
             payload = jwt.decode(
