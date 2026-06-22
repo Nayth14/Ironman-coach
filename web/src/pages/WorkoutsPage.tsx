@@ -4,6 +4,7 @@ import { DisciplineFilter, type SportFilter } from "../components/DisciplineFilt
 import { SportIcon } from "../components/SportIcon";
 import { api } from "../lib/api";
 import { formatDuration } from "../lib/config";
+import { invalidateTrainingQueries } from "../lib/queryHelpers";
 import type { Workout } from "../lib/types";
 
 export function WorkoutsPage() {
@@ -29,8 +30,7 @@ export function WorkoutsPage() {
       readiness_score: 7,
     });
     setCompleting(null);
-    qc.invalidateQueries({ queryKey: ["workouts"] });
-    qc.invalidateQueries({ queryKey: ["currentPlan"] });
+    invalidateTrainingQueries(qc);
   };
 
   if (isLoading) return <div className="p-8 text-text-muted">Loading…</div>;

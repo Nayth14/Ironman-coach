@@ -2,6 +2,7 @@ import type { Provider } from "@supabase/supabase-js";
 import { FormEvent, useState } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { AuthFooterLink, AuthLayout } from "../components/AuthLayout";
+import { FormAlert } from "../components/FormAlert";
 import { SocialButtons } from "../components/SocialButtons";
 import { TextInput } from "../components/TextInput";
 import { useAuth } from "../lib/auth";
@@ -69,11 +70,7 @@ export function LoginPage() {
           />
         </div>
 
-        {error && (
-          <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-            {error}
-          </div>
-        )}
+        <FormAlert message={error} />
 
         <button
           type="submit"
