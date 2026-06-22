@@ -18,11 +18,14 @@ export function OverviewPage() {
   const [sportFilter, setSportFilter] = useState<SportFilter>("all");
   const [chatOpen, setChatOpen] = useState(false);
   const [adaptation, setAdaptation] = useState<AdaptationEvent | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const qc = useQueryClient();
 
   useEffect(() => {
     if (!session) {
-      ensureGuestId();
+      ensureGuestId().catch((e) => {
+        console.error("Failed to ensure guest ID:", e);
+      });
     }
   }, [session]);
 
@@ -30,6 +33,8 @@ export function OverviewPage() {
     if (!session) return;
     api.getPendingAdaptation().then((r) => {
       if (r.adaptation) setAdaptation(r.adaptation);
+    }).catch((e) => {
+      console.error("Failed to fetch pending adaptation:", e);
     });
   }, [session]);
 
@@ -80,25 +85,40 @@ export function OverviewPage() {
 
   const handleComplete = useCallback(
     async (w: Workout) => {
-      await api.completeWorkout(w.id, { completed: true, rpe: 5 });
-      qc.invalidateQueries({ queryKey: ["currentPlan"] });
-      qc.invalidateQueries({ queryKey: ["workouts"] });
+      try {
+        setActionError(null);
+        await api.completeWorkout(w.id, { completed: true, rpe: 5 });
+        qc.invalidateQueries({ queryKey: ["currentPlan"] });
+        qc.invalidateQueries({ queryKey: ["workouts"] });
+      } catch (e) {
+        setActionError(`Failed to complete workout: ${(e as Error).message}`);
+      }
     },
     [qc]
   );
 
   const handleAdaptAccept = async () => {
     const id = adaptation?.eventId || adaptation?.id;
-    if (id) await api.acceptAdaptation(id, true);
-    setAdaptation(null);
-    qc.invalidateQueries({ queryKey: ["currentPlan"] });
-    qc.invalidateQueries({ queryKey: ["workouts"] });
+    try {
+      setActionError(null);
+      if (id) await api.acceptAdaptation(id, true);
+      setAdaptation(null);
+      qc.invalidateQueries({ queryKey: ["currentPlan"] });
+      qc.invalidateQueries({ queryKey: ["workouts"] });
+    } catch (e) {
+      setActionError(`Failed to accept adaptation: ${(e as Error).message}`);
+    }
   };
 
   const handleAdaptDismiss = async () => {
     const id = adaptation?.eventId || adaptation?.id;
-    if (id) await api.acceptAdaptation(id, false);
-    setAdaptation(null);
+    try {
+      setActionError(null);
+      if (id) await api.acceptAdaptation(id, false);
+      setAdaptation(null);
+    } catch (e) {
+      setActionError(`Failed to dismiss adaptation: ${(e as Error).message}`);
+    }
   };
 
   if (isLoading) {
@@ -118,6 +138,11 @@ export function OverviewPage() {
 
   return (
     <div className="p-8">
+      {actionError && (
+        <div className="mb-4 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          {actionError}
+        </div>
+      )}
       <header className="flex flex-wrap items-center justify-between gap-4 mb-6">
         <div>
           <h1 className="text-2xl font-bold">Training Overview</h1>

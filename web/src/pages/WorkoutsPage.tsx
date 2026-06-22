@@ -10,6 +10,7 @@ export function WorkoutsPage() {
   const [sportFilter, setSportFilter] = useState<SportFilter>("all");
   const [completing, setCompleting] = useState<string | null>(null);
   const [rpe, setRpe] = useState(5);
+  const [error, setError] = useState<string | null>(null);
   const qc = useQueryClient();
 
   const sport = sportFilter === "all" ? undefined : sportFilter;
@@ -23,20 +24,30 @@ export function WorkoutsPage() {
   const completed = workouts.filter((w) => w.status === "completed");
 
   const submitComplete = async (w: Workout) => {
-    await api.completeWorkout(w.id, {
-      completed: true,
-      rpe,
-      readiness_score: 7,
-    });
-    setCompleting(null);
-    qc.invalidateQueries({ queryKey: ["workouts"] });
-    qc.invalidateQueries({ queryKey: ["currentPlan"] });
+    try {
+      setError(null);
+      await api.completeWorkout(w.id, {
+        completed: true,
+        rpe,
+        readiness_score: 7,
+      });
+      setCompleting(null);
+      qc.invalidateQueries({ queryKey: ["workouts"] });
+      qc.invalidateQueries({ queryKey: ["currentPlan"] });
+    } catch (e) {
+      setError(`Failed to complete workout: ${(e as Error).message}`);
+    }
   };
 
   if (isLoading) return <div className="p-8 text-text-muted">Loading…</div>;
 
   return (
     <div className="p-8">
+      {error && (
+        <div className="mb-4 rounded-xl bg-red-50 border border-red-200 px-4 py-3 text-sm text-red-700">
+          {error}
+        </div>
+      )}
       <header className="flex flex-wrap items-center justify-between gap-4 mb-6">
         <h1 className="text-2xl font-bold">Workouts</h1>
         <DisciplineFilter value={sportFilter} onChange={setSportFilter} />

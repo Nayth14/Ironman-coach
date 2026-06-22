@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import uuid
 from typing import Any
 
 from engine import llm
+
+logger = logging.getLogger("ironman_coach.enrich")
 from engine.models import (
     AthleteProfile,
     PhaseName,
@@ -196,8 +199,8 @@ def _parse_steps(raw_steps: list[dict]) -> list[WorkoutStep]:
             cleaned["id"] = _new_step_id()
         try:
             out.append(WorkoutStep.model_validate(cleaned))
-        except Exception:
-            # Skip malformed steps rather than failing the whole plan
+        except Exception as exc:
+            logger.debug("Skipping malformed workout step %s: %s", cleaned.get("id"), exc)
             continue
     return out
 
@@ -348,7 +351,8 @@ def _apply_llm_result(week: PlannedWeek, data: dict) -> None:
         workout = by_id[wid]
         try:
             steps = _parse_steps(item.get("steps") or [])
-        except Exception:
+        except Exception as exc:
+            logger.warning("Failed to parse steps for workout %s: %s", wid, exc)
             continue
         if not steps:
             continue
@@ -383,7 +387,13 @@ def _call_llm_for_week(
             model=llm.workout_model(),
         )
         return json.loads(raw)
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "LLM enrichment failed for week %d (%s phase), falling back to templates: %s",
+            week.week_number,
+            phase.value,
+            exc,
+        )
         return None
 
 
