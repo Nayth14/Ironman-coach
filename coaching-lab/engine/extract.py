@@ -9,12 +9,16 @@ import json
 import re
 
 from engine import llm
+from engine.conversation import (
+    conversation_is_ready as _convo_ready,
+    format_conversation,
+    strip_token,
+)
 from engine.models import AthleteProfile
 from engine.prompts import EXTRACTION_SYSTEM
 
 READY_TOKEN = "[[READY_TO_BUILD]]"
 
-# Fallback when the coach signals completion in natural language but omits the token.
 _READY_PHRASES = (
     re.compile(r"i have all the information i need", re.I),
     re.compile(r"start building your (?:training )?plan", re.I),
@@ -25,16 +29,11 @@ _READY_PHRASES = (
 
 def conversation_is_ready(assistant_message: str) -> bool:
     """True when the onboarding coach signals it has enough info."""
-    if READY_TOKEN in assistant_message:
-        return True
-    text = assistant_message.strip()
-    if not text or text.endswith("?"):
-        return False
-    return any(pattern.search(text) for pattern in _READY_PHRASES)
+    return _convo_ready(assistant_message, READY_TOKEN, _READY_PHRASES)
 
 
 def strip_ready_token(text: str) -> str:
-    return text.replace(READY_TOKEN, "").strip()
+    return strip_token(text, READY_TOKEN)
 
 
 def _profile_json_schema() -> dict:
@@ -87,14 +86,6 @@ def _profile_json_schema() -> dict:
     }
 
 
-def _format_conversation(messages: list[dict]) -> str:
-    lines = []
-    for m in messages:
-        role = "Athlete" if m["role"] == "user" else "Coach"
-        lines.append(f"{role}: {m['content']}")
-    return "\n".join(lines)
-
-
 def _sanitize_profile_data(data: dict) -> dict:
     """Normalize LLM output before Pydantic validation."""
     out = dict(data)
@@ -115,7 +106,7 @@ def _sanitize_profile_data(data: dict) -> dict:
 
 def extract_profile(messages: list[dict]) -> AthleteProfile:
     """Call the LLM to extract a validated AthleteProfile from the chat."""
-    conversation = _format_conversation(messages)
+    conversation = format_conversation(messages)
     raw = llm.complete_json(
         system=EXTRACTION_SYSTEM,
         user_content=f"Conversation:\n\n{conversation}",
