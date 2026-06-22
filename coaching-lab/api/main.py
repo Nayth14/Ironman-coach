@@ -52,8 +52,8 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=[o.strip() for o in _cors_origins if o.strip()],
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Guest-Id"],
 )
 
 
@@ -66,17 +66,21 @@ class GuestCreate(BaseModel):
     guest_id: str | None = None
 
 
+_MAX_CHAT_MESSAGES = 50
+_MAX_MESSAGE_LENGTH = 10_000
+
+
 class ChatMessage(BaseModel):
-    role: str
-    content: str
+    role: str = Field(..., max_length=20)
+    content: str = Field(..., max_length=_MAX_MESSAGE_LENGTH)
 
 
 class OnboardingChatRequest(BaseModel):
-    messages: list[ChatMessage]
+    messages: list[ChatMessage] = Field(..., max_length=_MAX_CHAT_MESSAGES)
 
 
 class PlanGenerateRequest(BaseModel):
-    messages: list[ChatMessage]
+    messages: list[ChatMessage] = Field(..., max_length=_MAX_CHAT_MESSAGES)
 
 
 class CompleteWorkoutRequest(BaseModel):
@@ -92,15 +96,15 @@ class AdaptationAcceptRequest(BaseModel):
 
 
 class CoachingChatRequest(BaseModel):
-    messages: list[ChatMessage]
+    messages: list[ChatMessage] = Field(..., max_length=_MAX_CHAT_MESSAGES)
 
 
 class WeeklyCheckinChatRequest(BaseModel):
-    messages: list[ChatMessage]
+    messages: list[ChatMessage] = Field(..., max_length=_MAX_CHAT_MESSAGES)
 
 
 class WeeklyContextExtractRequest(BaseModel):
-    messages: list[ChatMessage]
+    messages: list[ChatMessage] = Field(..., max_length=_MAX_CHAT_MESSAGES)
     week_number: int | None = None
 
 
@@ -189,7 +193,7 @@ def _build_coaching_context(s: Store, athlete: dict) -> str:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "storage": "supabase" if get_store()._use_supabase else "sqlite"}
+    return {"status": "ok"}
 
 
 @app.post("/api/guests")
@@ -244,8 +248,9 @@ def onboarding_chat(body: OnboardingChatRequest, s: Store = Depends(store)):
                 yield _sse_event("token", {"content": delta, "full": visible})
             clean = extract.strip_ready_token(full)
             yield _sse_event("done", {"content": clean, "ready": extract.conversation_is_ready(full)})
-        except Exception as exc:
-            yield _sse_event("error", {"message": str(exc)})
+        except Exception:
+            logger.exception("Onboarding chat error")
+            yield _sse_event("error", {"message": "An internal error occurred"})
 
     return _sse_response(stream)
 
@@ -310,8 +315,9 @@ def generate_plan(
             yield _sse_event("done", payload)
         except ValueError as exc:
             yield _sse_event("error", {"message": str(exc)})
-        except Exception as exc:
-            yield _sse_event("error", {"message": f"Plan generation failed: {exc}"})
+        except Exception:
+            logger.exception("Plan generation failed")
+            yield _sse_event("error", {"message": "Plan generation failed"})
 
     return _sse_response(stream)
 
@@ -414,8 +420,9 @@ def weekly_checkin_chat(
                 "done",
                 {"content": clean, "ready": weekly_ctx.conversation_is_ready(full)},
             )
-        except Exception as exc:
-            yield _sse_event("error", {"message": str(exc)})
+        except Exception:
+            logger.exception("Weekly check-in chat error")
+            yield _sse_event("error", {"message": "An internal error occurred"})
 
     conv = s.get_or_create_chat(athlete["id"], "weekly_checkin")
     s.save_chat_messages(conv["id"], messages)
@@ -439,8 +446,9 @@ def extract_weekly_context_endpoint(
 
     try:
         context = weekly_ctx.extract_weekly_context(messages, body.week_number)
-    except Exception as exc:
-        raise HTTPException(500, f"Weekly context extraction failed: {exc}") from exc
+    except Exception:
+        logger.exception("Weekly context extraction failed")
+        raise HTTPException(500, "Weekly context extraction failed")
 
     conv = s.get_or_create_chat(athlete["id"], "weekly_checkin")
     s.save_chat_messages(conv["id"], messages)
@@ -647,7 +655,7 @@ def accept_adaptation(
             "eventId": event_id,
             "accepted": True,
             "applied": False,
-            "error": str(exc),
+            "error": "Adaptation could not be applied",
         }
 
 
@@ -672,8 +680,9 @@ def coaching_chat(
             conv = s.get_or_create_chat(athlete["id"], "coaching")
             updated = messages + [{"role": "assistant", "content": full}]
             s.save_chat_messages(conv["id"], updated)
-        except Exception as exc:
-            yield _sse_event("error", {"message": str(exc)})
+        except Exception:
+            logger.exception("Coaching chat error")
+            yield _sse_event("error", {"message": "An internal error occurred"})
 
     return _sse_response(stream)
 
