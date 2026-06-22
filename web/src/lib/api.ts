@@ -9,25 +9,34 @@ export function setAccessTokenGetter(getter: () => string | null): void {
   accessTokenGetter = getter;
 }
 
+function buildAuthHeaders(
+  mode: FetchMode,
+  extra: Record<string, string> = {}
+): Record<string, string> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    ...extra,
+  };
+  if (mode === "guest" || mode === "both") {
+    const guestId = getGuestId();
+    if (guestId) headers["X-Guest-Id"] = guestId;
+  }
+  if (mode === "auth" || mode === "both") {
+    const token = accessTokenGetter?.();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 async function apiFetch<T>(
   path: string,
   options: RequestInit = {},
   mode: FetchMode = "auth"
 ): Promise<T> {
-  const headers: Record<string, string> = {
-    "Content-Type": "application/json",
-    ...(options.headers as Record<string, string>),
-  };
-
-  if (mode === "guest" || mode === "both") {
-    const guestId = getGuestId();
-    if (guestId) headers["X-Guest-Id"] = guestId;
-  }
-
-  if (mode === "auth" || mode === "both") {
-    const token = accessTokenGetter?.();
-    if (token) headers.Authorization = `Bearer ${token}`;
-  }
+  const headers = buildAuthHeaders(
+    mode,
+    options.headers as Record<string, string>
+  );
 
   const res = await fetch(apiPath(path), { ...options, headers });
   if (!res.ok) {
@@ -51,17 +60,7 @@ export async function streamSSE<TDone = { content: string; ready?: boolean }>(
   handlers: SSEHandlers<TDone>,
   mode: FetchMode = "guest"
 ): Promise<void> {
-  const headers: Record<string, string> = { "Content-Type": "application/json" };
-
-  if (mode === "guest" || mode === "both") {
-    const guestId = getGuestId();
-    if (guestId) headers["X-Guest-Id"] = guestId;
-  }
-
-  if (mode === "auth" || mode === "both") {
-    const token = accessTokenGetter?.();
-    if (token) headers.Authorization = `Bearer ${token}`;
-  }
+  const headers = buildAuthHeaders(mode);
 
   const res = await fetch(apiPath(path), {
     method: "POST",

@@ -11,6 +11,7 @@ import { api } from "../lib/api";
 import { useAuth } from "../lib/auth";
 import { ensureGuestId } from "../lib/guest";
 import { formatDuration } from "../lib/config";
+import { invalidateTrainingQueries } from "../lib/queryHelpers";
 import type { Workout, Phase, AdaptationEvent } from "../lib/types";
 
 export function OverviewPage() {
@@ -88,8 +89,7 @@ export function OverviewPage() {
       try {
         setActionError(null);
         await api.completeWorkout(w.id, { completed: true, rpe: 5 });
-        qc.invalidateQueries({ queryKey: ["currentPlan"] });
-        qc.invalidateQueries({ queryKey: ["workouts"] });
+        invalidateTrainingQueries(qc);
       } catch (e) {
         setActionError(`Failed to complete workout: ${(e as Error).message}`);
       }
@@ -103,8 +103,7 @@ export function OverviewPage() {
       setActionError(null);
       if (id) await api.acceptAdaptation(id, true);
       setAdaptation(null);
-      qc.invalidateQueries({ queryKey: ["currentPlan"] });
-      qc.invalidateQueries({ queryKey: ["workouts"] });
+      invalidateTrainingQueries(qc);
     } catch (e) {
       setActionError(`Failed to accept adaptation: ${(e as Error).message}`);
     }

@@ -1,6 +1,7 @@
 import { FormEvent, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { AuthLayout } from "../components/AuthLayout";
+import { FormAlert } from "../components/FormAlert";
 import { TextInput } from "../components/TextInput";
 import { useAuth } from "../lib/auth";
 
@@ -63,11 +64,7 @@ export function ResetPasswordPage() {
             required
           />
 
-          {error && (
-            <div className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl px-4 py-3">
-              {error}
-            </div>
-          )}
+          <FormAlert message={error} />
 
           <button
             type="submit"
