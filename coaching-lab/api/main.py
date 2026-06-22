@@ -191,7 +191,8 @@ def _generate_summary(profile: AthleteProfile, verdict: ReadinessResult, tp: Tra
             messages=[{"role": "user", "content": context}],
             model=llm.summary_model(),
         )
-    except Exception:
+    except Exception as exc:
+        logger.warning("LLM summary generation failed, using fallback: %s", exc)
         return _summary_fallback(profile, verdict, tp)
 
 

@@ -89,6 +89,8 @@ export function OnboardingPage() {
           },
         ]);
       }
+    }).catch((e) => {
+      setError(`Failed to initialize session: ${(e as Error).message}`);
     });
   }, [demo]);
 

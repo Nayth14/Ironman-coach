@@ -7,6 +7,7 @@ falls back to a local SQLite database so the app runs without cloud setup.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sqlite3
 import uuid
@@ -14,6 +15,8 @@ from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
+
+logger = logging.getLogger("ironman_coach.store")
 
 from engine.models import (
     AdaptationDecision,
@@ -682,7 +685,13 @@ class Store:
             if r.get("completed_at"):
                 try:
                     completed_at = date.fromisoformat(str(r["completed_at"])[:10])
-                except ValueError:
+                except ValueError as exc:
+                    logger.warning(
+                        "Invalid completed_at date for workout_id=%s: %r — %s",
+                        r.get("workout_id"),
+                        r["completed_at"],
+                        exc,
+                    )
                     completed_at = None
             out.append(
                 WorkoutCompletion(
